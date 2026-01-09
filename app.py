@@ -10,13 +10,34 @@ from typing import Generator
 from flask import Flask, Response, render_template, request, send_file
 import cv2
 import numpy as np
-from ultralytics import YOLO
 from imageio_ffmpeg import get_ffmpeg_exe
+
+# Reduce CPU oversubscription and memory spikes (helpful on small hosts like Render).
+os.environ.setdefault("OMP_NUM_THREADS", os.environ.get("OMP_NUM_THREADS", "1"))
+os.environ.setdefault("MKL_NUM_THREADS", os.environ.get("MKL_NUM_THREADS", "1"))
+os.environ.setdefault("OPENBLAS_NUM_THREADS", os.environ.get("OPENBLAS_NUM_THREADS", "1"))
+os.environ.setdefault("NUMEXPR_NUM_THREADS", os.environ.get("NUMEXPR_NUM_THREADS", "1"))
+
+from ultralytics import YOLO
 
 app = Flask(__name__)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-model = YOLO(os.path.join(ROOT, "model", "best.pt"))
+
+_model_lock = threading.Lock()
+_predict_lock = threading.Lock()
+_model = None
+
+
+def get_model() -> YOLO:
+    global _model
+    if _model is not None:
+        return _model
+    with _model_lock:
+        if _model is None:
+            model_path = os.environ.get("MODEL_PATH") or os.path.join(ROOT, "model", "best.pt")
+            _model = YOLO(model_path)
+        return _model
 
 _live_lock = threading.Lock()
 _live_state = {"defect": False, "score": 0.0, "ts": 0.0}
@@ -35,7 +56,18 @@ def _get_live_state() -> dict:
 
 
 def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float]:
-    results = model.predict(source=frame, conf=conf_thres, verbose=False)
+    # Allow operators (e.g., Render) to reduce latency/memory via env vars.
+    imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
+    device = os.environ.get("MODEL_DEVICE")  # e.g. 'cpu' or '0'
+
+    with _predict_lock:
+        results = get_model().predict(
+            source=frame,
+            conf=conf_thres,
+            imgsz=imgsz,
+            device=device,
+            verbose=False,
+        )
     r0 = results[0]
     boxed = r0.plot()
 
@@ -271,7 +303,14 @@ def live():
             # Throttle inference to reduce lag (reuse last annotated frame in between).
             if frame_idx % infer_every == 0 or last_jpeg is None:
                 try:
-                    results = model.predict(source=frame, conf=conf_thres, imgsz=imgsz, verbose=False)
+                    with _predict_lock:
+                        results = get_model().predict(
+                            source=frame,
+                            conf=conf_thres,
+                            imgsz=imgsz,
+                            device=os.environ.get("MODEL_DEVICE"),
+                            verbose=False,
+                        )
                     r0 = results[0]
                     boxed = r0.plot()
 

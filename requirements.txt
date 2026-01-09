@@ -1,0 +1,9 @@
+flask>=2.3,<4
+# Ultralytics pulls torch/torchvision as needed on most platforms
+ultralytics>=8.0.0
+numpy>=1.23
+# Server-friendly OpenCV (no GUI deps)
+opencv-python-headless>=4.8
+imageio-ffmpeg>=0.4
+# Production WSGI server (Linux)
+gunicorn>=21

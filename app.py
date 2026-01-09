@@ -57,7 +57,7 @@ def _get_live_state() -> dict:
 
 def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float]:
     # Allow operators (e.g., Render) to reduce latency/memory via env vars.
-    imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
+    imgsz = int(os.environ.get("MODEL_IMGSZ", "416"))
     device = os.environ.get("MODEL_DEVICE")  # e.g. 'cpu' or '0'
 
     with _predict_lock:
@@ -82,7 +82,8 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    enable_live = os.environ.get("ENABLE_LIVE", "1").strip().lower() not in {"0", "false", "no"}
+    return render_template("index.html", enable_live=enable_live)
 
 
 @app.get("/live-status")
@@ -242,6 +243,12 @@ def detect_video_legacy():
 
 @app.route("/live")
 def live():
+    if os.environ.get("ENABLE_LIVE", "1").strip().lower() in {"0", "false", "no"}:
+        return Response(
+            "Live camera is disabled on this deployment.",
+            status=503,
+            mimetype="text/plain",
+        )
     # Try to open the camera up-front so we can return a clear error.
     if os.name == "nt":
         test_cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)

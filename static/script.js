@@ -4,6 +4,7 @@ let liveRunning = false;
 let livePollId = null;
 let lastBeepAt = 0;
 let audioCtx = null;
+let enableLive = true;
 
 function getEl(id) {
     return document.getElementById(id);
@@ -113,7 +114,8 @@ function syncControls() {
 }
 
 function setMode(nextMode) {
-    mode = nextMode === "video" ? "video" : nextMode === "live" ? "live" : "image";
+    const requested = nextMode === "video" ? "video" : nextMode === "live" ? "live" : "image";
+    mode = requested === "live" && !enableLive ? "image" : requested;
 
     const imgOut = getEl("imgOut");
     const vidOut = getEl("vidOut");
@@ -200,6 +202,10 @@ async function detect() {
 
 function startLive() {
     if (mode !== "live") return;
+    if (!enableLive) {
+        setStatus("Live camera is not available on this deployment.");
+        return;
+    }
 
     const liveOut = getEl("liveOut");
     const imgOut = getEl("imgOut");
@@ -238,6 +244,19 @@ function stopLive() {
 setMode("image");
 
 window.addEventListener("DOMContentLoaded", () => {
+    // Enable/disable Live Cam for cloud deployments.
+    try {
+        const v = document.body && document.body.dataset ? document.body.dataset.enableLive : null;
+        enableLive = v !== "0";
+    } catch {
+        enableLive = true;
+    }
+
+    const liveTab = getEl("modeLive");
+    if (liveTab) {
+        liveTab.style.display = enableLive ? "" : "none";
+    }
+
     const fileInput = getEl("file");
     if (fileInput) {
         fileInput.addEventListener("change", () => {

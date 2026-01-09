@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env files
+.env
+.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

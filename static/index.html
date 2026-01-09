@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fabric Defect Detection</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar">
+    <h2>Fabric AI</h2>
+    <button onclick="showSection('image')">📷 Image</button>
+    <button onclick="showSection('video')">🎥 Video</button>
+    <button onclick="showSection('live')">📡 Live Camera</button>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="content">
+
+    <!-- IMAGE -->
+    <div id="image" class="section active">
+      <h3>Upload Image</h3>
+      <input type="file" id="imageFile" accept="image/*">
+      <button onclick="uploadImage()">Detect</button>
+      <img id="imageResult">
+    </div>
+
+    <!-- VIDEO -->
+    <div id="video" class="section">
+      <h3>Upload Video</h3>
+      <input type="file" id="videoFile" accept="video/*">
+      <button onclick="uploadVideo()">Detect</button>
+      <video id="videoResult" controls></video>
+    </div>
+
+    <!-- LIVE -->
+    <div id="live" class="section">
+      <h3>Live Camera</h3>
+      <img src="/live" class="live-feed">
+    </div>
+
+  </div>
+</div>
+
+<script src="/static/script.js"></script>
+</body>
+</html>

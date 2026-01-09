@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fabric Defect Detection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css?v=13">
+</head>
+<body>
+
+<div class="container">
+  <header class="header">
+    <div class="title">Fabric Defect Detection</div>
+    <div class="subtitle">Upload image/video or use live camera. Click Detect to see the boxed result.</div>
+  </header>
+
+  <section class="card">
+    <div class="tabs" role="tablist" aria-label="Input mode">
+      <button id="modeImage" type="button" class="tab" onclick="setMode('image')">Image</button>
+      <button id="modeVideo" type="button" class="tab" onclick="setMode('video')">Video</button>
+      <button id="modeLive" type="button" class="tab" onclick="setMode('live')">Live Cam</button>
+    </div>
+
+    <div id="fileControls" class="controls">
+      <label class="file">
+        <span class="fileLabel">Choose file</span>
+        <input type="file" id="file" accept="image/*" />
+      </label>
+      <button id="detectBtn" type="button" class="btn btnPrimary" onclick="detect()">Detect</button>
+    </div>
+
+    <div id="liveControls" class="controls" style="display:none">
+      <button id="liveDetectBtn" type="button" class="btn btnPrimary" onclick="detect()">Detect</button>
+      <button id="stopLiveBtn" type="button" class="btn" onclick="stopLive()" disabled>Stop</button>
+      <div id="liveAlert" class="liveAlert" aria-live="polite">
+        <span id="liveDot" class="liveDot" aria-hidden="true"></span>
+        <span id="liveAlertText">No defect</span>
+      </div>
+    </div>
+
+    <div id="status" class="status" aria-live="polite"></div>
+
+    <div class="output">
+      <img id="liveOut" style="display:none" />
+      <img id="imgOut" style="display:none" />
+      <video id="vidOut" controls style="display:none"></video>
+    </div>
+  </section>
+
+  <footer class="footer">Tip: Use smaller videos for faster processing.</footer>
+</div>
+
+<script src="/static/script.js?v=13"></script>
+</body>
+</html>

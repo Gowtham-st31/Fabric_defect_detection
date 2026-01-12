@@ -154,49 +154,69 @@ async function detect() {
         return;
     }
 
-    const fileInput = getEl("file");
-    const file = selectedFile || (fileInput && fileInput.files ? fileInput.files[0] : null);
-    if (!file) {
-        alert("Select a file first");
-        return;
-    }
+    const btn = getEl("detectBtn");
+    if (btn) btn.disabled = true;
+    setStatus("Processing…");
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const url = mode === "video" ? "/upload-video" : "/upload-image";
-    const res = await fetch(url, { method: "POST", body: formData });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Request failed (${res.status})`);
-    }
-
-    const defect = res.headers.get("X-Defect-Detected") === "1";
-    const score = res.headers.get("X-Heatmap-Max");
-    setStatus(defect ? `DEFECT (score: ${score ?? "?"})` : `No defect (score: ${score ?? "?"})`);
-
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-
-    const imgOut = getEl("imgOut");
-    const vidOut = getEl("vidOut");
-    const liveOut = getEl("liveOut");
-    stopLiveStream();
-    if (liveOut) liveOut.style.display = "none";
-
-    if (mode === "video") {
-        if (vidOut) {
-            vidOut.src = objectUrl;
-            vidOut.style.display = "block";
-            vidOut.load();
+    try {
+        const fileInput = getEl("file");
+        const file = selectedFile || (fileInput && fileInput.files ? fileInput.files[0] : null);
+        if (!file) {
+            alert("Select a file first");
+            setStatus("");
+            return;
         }
-        if (imgOut) imgOut.style.display = "none";
-    } else {
-        if (imgOut) {
-            imgOut.src = objectUrl;
-            imgOut.style.display = "block";
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const url = mode === "video" ? "/upload-video" : "/upload-image";
+        const res = await fetch(url, { method: "POST", body: formData });
+        if (!res.ok) {
+            let text = await res.text();
+            try {
+                const j = JSON.parse(text);
+                if (j && typeof j.error === "string") text = j.error;
+            } catch {
+                // ignore
+            }
+            throw new Error(text || `Request failed (${res.status})`);
         }
-        if (vidOut) vidOut.style.display = "none";
+
+        const defect = res.headers.get("X-Defect-Detected") === "1";
+        const score = res.headers.get("X-Heatmap-Max");
+        setStatus(defect ? `DEFECT (score: ${score ?? "?"})` : `No defect (score: ${score ?? "?"})`);
+
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+
+        const imgOut = getEl("imgOut");
+        const vidOut = getEl("vidOut");
+        const liveOut = getEl("liveOut");
+        stopLiveStream();
+        if (liveOut) liveOut.style.display = "none";
+
+        if (mode === "video") {
+            if (vidOut) {
+                vidOut.src = objectUrl;
+                vidOut.style.display = "block";
+                vidOut.load();
+            }
+            if (imgOut) imgOut.style.display = "none";
+        } else {
+            if (imgOut) {
+                imgOut.src = objectUrl;
+                imgOut.style.display = "block";
+            }
+            if (vidOut) vidOut.style.display = "none";
+        }
+    } catch (e) {
+        const msg = e && e.message ? String(e.message) : "Detect failed";
+        console.error(e);
+        setStatus(`Error: ${msg}`);
+        alert(msg);
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 

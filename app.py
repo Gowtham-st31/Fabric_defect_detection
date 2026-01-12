@@ -110,7 +110,11 @@ def upload_image():
         return {"error": "Invalid image"}, 400
 
     conf_thres = float(os.environ.get("CONF_THRES", "0.25"))
-    boxed, defect, score = predict_and_annotate(img, conf_thres)
+    try:
+        boxed, defect, score = predict_and_annotate(img, conf_thres)
+    except Exception as e:
+        app.logger.exception("Inference failed for /upload-image")
+        return {"error": f"Inference failed: {type(e).__name__}"}, 500
 
     ok, enc = cv2.imencode(".jpg", boxed)
     if not ok:
@@ -157,7 +161,15 @@ def upload_video():
         if not ret:
             break
 
-        boxed, defect, score = predict_and_annotate(frame, conf_thres)
+        try:
+            boxed, defect, score = predict_and_annotate(frame, conf_thres)
+        except Exception as e:
+            cap.release()
+            os.unlink(in_path)
+            shutil.rmtree(frame_dir, ignore_errors=True)
+            os.unlink(out_path)
+            app.logger.exception("Inference failed for /upload-video")
+            return {"error": f"Inference failed: {type(e).__name__}"}, 500
         frame_path = os.path.join(frame_dir, f"frame_{frame_idx:06d}.jpg")
         ok = cv2.imwrite(frame_path, boxed, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         if not ok:

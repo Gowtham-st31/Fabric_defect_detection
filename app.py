@@ -87,7 +87,19 @@ def index():
     enable_live = os.environ.get("ENABLE_LIVE", "1").strip().lower() not in {"0", "false", "no"}
     live_mode = os.environ.get("LIVE_MODE") or ("server" if os.name == "nt" else "client")
     live_mode = "server" if str(live_mode).strip().lower() == "server" else "client"
-    return render_template("index.html", enable_live=enable_live, live_mode=live_mode)
+    # Client-live tuning knobs (mostly for Render/free CPU boxes).
+    live_client_interval_ms = int(os.environ.get("LIVE_CLIENT_INTERVAL_MS", "700"))
+    live_client_width = int(os.environ.get("LIVE_CLIENT_WIDTH", "480"))
+    live_client_jpeg_quality = float(os.environ.get("LIVE_CLIENT_JPEG_QUALITY", "0.75"))
+
+    return render_template(
+        "index.html",
+        enable_live=enable_live,
+        live_mode=live_mode,
+        live_client_interval_ms=live_client_interval_ms,
+        live_client_width=live_client_width,
+        live_client_jpeg_quality=live_client_jpeg_quality,
+    )
 
 
 @app.get("/live-status")

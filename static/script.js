@@ -13,6 +13,10 @@ let liveInFlight = false;
 let liveCanvas = null;
 let lastLiveObjectUrl = null;
 
+let liveClientIntervalMs = 700;
+let liveClientWidth = 480;
+let liveClientJpegQuality = 0.75;
+
 function getEl(id) {
     return document.getElementById(id);
 }
@@ -101,7 +105,7 @@ async function startClientLive() {
     if (liveOut) liveOut.style.display = "block";
     setStatus("Live camera started");
 
-    // Capture frames at ~2 FPS to keep costs reasonable on free tiers.
+    // Capture frames at a configurable interval (trade off: higher FPS => more CPU).
     if (!liveFrameTimerId) {
         liveFrameTimerId = setInterval(async () => {
             if (!liveRunning || liveInFlight) return;
@@ -109,7 +113,7 @@ async function startClientLive() {
 
             liveInFlight = true;
             try {
-                const targetW = 640;
+                const targetW = liveClientWidth;
                 const scale = targetW / camIn.videoWidth;
                 const w = Math.max(320, Math.round(camIn.videoWidth * Math.min(1, scale)));
                 const h = Math.max(240, Math.round(camIn.videoHeight * Math.min(1, scale)));
@@ -119,7 +123,9 @@ async function startClientLive() {
                 const ctx = liveCanvas.getContext("2d");
                 ctx.drawImage(camIn, 0, 0, w, h);
 
-                const blob = await new Promise((resolve) => liveCanvas.toBlob(resolve, "image/jpeg", 0.82));
+                const blob = await new Promise((resolve) =>
+                    liveCanvas.toBlob(resolve, "image/jpeg", liveClientJpegQuality)
+                );
                 if (!blob) return;
 
                 const formData = new FormData();
@@ -161,7 +167,7 @@ async function startClientLive() {
             } finally {
                 liveInFlight = false;
             }
-        }, 500);
+        }, liveClientIntervalMs);
     }
 }
 
@@ -411,6 +417,18 @@ window.addEventListener("DOMContentLoaded", () => {
         liveMode = m === "server" ? "server" : "client";
     } catch {
         liveMode = "client";
+    }
+
+    try {
+        const d = document.body && document.body.dataset ? document.body.dataset : null;
+        if (d && d.liveClientIntervalMs) liveClientIntervalMs = Math.max(250, parseInt(d.liveClientIntervalMs, 10) || 700);
+        if (d && d.liveClientWidth) liveClientWidth = Math.max(256, parseInt(d.liveClientWidth, 10) || 480);
+        if (d && d.liveClientJpegQuality) {
+            const q = parseFloat(d.liveClientJpegQuality);
+            if (!Number.isNaN(q)) liveClientJpegQuality = Math.min(0.95, Math.max(0.35, q));
+        }
+    } catch {
+        // keep defaults
     }
 
     const liveTab = getEl("modeLive");

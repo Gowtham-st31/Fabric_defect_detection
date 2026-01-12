@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
-<body data-enable-live="{{ '1' if enable_live else '0' }}">
+<body data-enable-live="{{ '1' if enable_live else '0' }}" data-live-mode="{{ live_mode }}">
 
 <div class="container">
   <header class="header">
@@ -40,6 +40,7 @@
     <div id="status" class="status" aria-live="polite"></div>
 
     <div class="output">
+      <video id="camIn" autoplay playsinline muted style="display:none"></video>
       <img id="liveOut" style="display:none" />
       <img id="imgOut" style="display:none" />
       <video id="vidOut" controls style="display:none"></video>

@@ -5,6 +5,13 @@ let livePollId = null;
 let lastBeepAt = 0;
 let audioCtx = null;
 let enableLive = true;
+let liveMode = "client"; // 'client' (browser webcam) or 'server' (server webcam MJPEG)
+
+let camStream = null;
+let liveFrameTimerId = null;
+let liveInFlight = false;
+let liveCanvas = null;
+let lastLiveObjectUrl = null;
 
 function getEl(id) {
     return document.getElementById(id);
@@ -16,9 +23,35 @@ function setStatus(msg) {
 }
 
 function stopLiveStream() {
+    // Stop timers first.
+    if (liveFrameTimerId) {
+        clearInterval(liveFrameTimerId);
+        liveFrameTimerId = null;
+    }
     const liveOut = getEl("liveOut");
     if (liveOut) liveOut.src = "";
     liveRunning = false;
+
+    // Stop client webcam.
+    const camIn = getEl("camIn");
+    if (camIn && camIn.srcObject) camIn.srcObject = null;
+    if (camStream) {
+        try {
+            camStream.getTracks().forEach((t) => t.stop());
+        } catch {
+            // ignore
+        }
+        camStream = null;
+    }
+
+    if (lastLiveObjectUrl) {
+        try {
+            URL.revokeObjectURL(lastLiveObjectUrl);
+        } catch {
+            // ignore
+        }
+        lastLiveObjectUrl = null;
+    }
 
     const startBtn = getEl("liveDetectBtn");
     const stopBtn = getEl("stopLiveBtn");
@@ -34,6 +67,102 @@ function stopLiveStream() {
     const alertText = getEl("liveAlertText");
     if (alertBox) alertBox.classList.remove("defect");
     if (alertText) alertText.textContent = "No defect";
+}
+
+async function startClientLive() {
+    const liveOut = getEl("liveOut");
+    const camIn = getEl("camIn");
+    const startBtn = getEl("liveDetectBtn");
+    const stopBtn = getEl("stopLiveBtn");
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus("Your browser does not support camera access.");
+        return;
+    }
+
+    try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        if (camIn) {
+            camIn.srcObject = camStream;
+            await camIn.play();
+        }
+    } catch (e) {
+        const msg = e && e.message ? String(e.message) : "Camera permission denied";
+        setStatus(`Camera error: ${msg}`);
+        alert(msg);
+        return;
+    }
+
+    if (!liveCanvas) liveCanvas = document.createElement("canvas");
+
+    liveRunning = true;
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    if (liveOut) liveOut.style.display = "block";
+    setStatus("Live camera started");
+
+    // Capture frames at ~2 FPS to keep costs reasonable on free tiers.
+    if (!liveFrameTimerId) {
+        liveFrameTimerId = setInterval(async () => {
+            if (!liveRunning || liveInFlight) return;
+            if (!camIn || !camIn.videoWidth || !camIn.videoHeight) return;
+
+            liveInFlight = true;
+            try {
+                const targetW = 640;
+                const scale = targetW / camIn.videoWidth;
+                const w = Math.max(320, Math.round(camIn.videoWidth * Math.min(1, scale)));
+                const h = Math.max(240, Math.round(camIn.videoHeight * Math.min(1, scale)));
+
+                liveCanvas.width = w;
+                liveCanvas.height = h;
+                const ctx = liveCanvas.getContext("2d");
+                ctx.drawImage(camIn, 0, 0, w, h);
+
+                const blob = await new Promise((resolve) => liveCanvas.toBlob(resolve, "image/jpeg", 0.82));
+                if (!blob) return;
+
+                const formData = new FormData();
+                formData.append("file", blob, "frame.jpg");
+
+                const res = await fetch(`/upload-image?t=${Date.now()}`, { method: "POST", body: formData, cache: "no-store" });
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(text || `Request failed (${res.status})`);
+                }
+
+                const defect = res.headers.get("X-Defect-Detected") === "1";
+                const score = res.headers.get("X-Heatmap-Max");
+                const alertBox = getEl("liveAlert");
+                const alertText = getEl("liveAlertText");
+
+                if (alertBox) alertBox.classList.toggle("defect", defect);
+                if (alertText) {
+                    alertText.textContent = defect ? `DEFECT (score: ${score ?? "?"})` : "No defect";
+                }
+                if (defect) playDangerSound();
+
+                const outBlob = await res.blob();
+                const objectUrl = URL.createObjectURL(outBlob);
+                if (liveOut) liveOut.src = objectUrl;
+                if (lastLiveObjectUrl) {
+                    try {
+                        URL.revokeObjectURL(lastLiveObjectUrl);
+                    } catch {
+                        // ignore
+                    }
+                }
+                lastLiveObjectUrl = objectUrl;
+            } catch (e) {
+                console.error(e);
+                // Don't spam alerts; just show status.
+                const msg = e && e.message ? String(e.message) : "Live detect failed";
+                setStatus(`Live error: ${msg}`);
+            } finally {
+                liveInFlight = false;
+            }
+        }, 500);
+    }
 }
 
 function playDangerSound() {
@@ -227,6 +356,11 @@ function startLive() {
         return;
     }
 
+    if (liveMode === "client") {
+        startClientLive();
+        return;
+    }
+
     const liveOut = getEl("liveOut");
     const imgOut = getEl("imgOut");
     const vidOut = getEl("vidOut");
@@ -270,6 +404,13 @@ window.addEventListener("DOMContentLoaded", () => {
         enableLive = v !== "0";
     } catch {
         enableLive = true;
+    }
+
+    try {
+        const m = document.body && document.body.dataset ? document.body.dataset.liveMode : null;
+        liveMode = m === "server" ? "server" : "client";
+    } catch {
+        liveMode = "client";
     }
 
     const liveTab = getEl("modeLive");

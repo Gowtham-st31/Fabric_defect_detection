@@ -82,10 +82,12 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
 
 @app.route("/")
 def index():
-    # Cloud hosts (Render/Linux) typically have no webcam (/dev/video0), so default Live Cam off.
-    default_enable_live = "1" if os.name == "nt" else "0"
-    enable_live = os.environ.get("ENABLE_LIVE", default_enable_live).strip().lower() not in {"0", "false", "no"}
-    return render_template("index.html", enable_live=enable_live)
+    # Render/Linux servers don't have a physical webcam device, but we can still support "Live"
+    # by using the *client* (browser) webcam and POSTing frames to the server.
+    enable_live = os.environ.get("ENABLE_LIVE", "1").strip().lower() not in {"0", "false", "no"}
+    live_mode = os.environ.get("LIVE_MODE") or ("server" if os.name == "nt" else "client")
+    live_mode = "server" if str(live_mode).strip().lower() == "server" else "client"
+    return render_template("index.html", enable_live=enable_live, live_mode=live_mode)
 
 
 @app.get("/live-status")

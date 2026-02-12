@@ -39,12 +39,17 @@ def get_model():
     with _model_lock:
         if _model is None:
             model_path = os.environ.get("MODEL_PATH") or os.path.join(ROOT, "model", "best.pt")
+            app.logger.info("Loading model from: %s", model_path)
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
             try:
                 _model = YOLO(model_path)
                 _model_type = "yolov8"
+                app.logger.info("Model loaded successfully as YOLOv8/YOLO11")
             except Exception as e:
                 # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
                 msg = str(e) or ""
+                app.logger.warning("YOLO() failed: %s", msg)
                 yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
                 missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
 
@@ -62,10 +67,12 @@ def get_model():
                             trust_repo=True,
                         )
                         _model_type = "yolov5"
+                        app.logger.info("Model loaded successfully as YOLOv5 via torch.hub")
                         # Rename class labels to "defect"
                         if hasattr(_model, "names"):
                             _model.names = {k: "defect" for k in _model.names}
                     except Exception as e2:
+                        app.logger.exception("torch.hub.load failed: %s", e2)
                         raise RuntimeError(
                             f"Failed to load YOLOv5 model from '{model_path}': {e2}"
                         ) from e
@@ -467,7 +474,22 @@ def stop_live_legacy():
     return "stopped"
 
 
+# Preload model at startup to catch errors early (especially on deployment)
+def _preload_model():
+    try:
+        model, model_type = get_model()
+        app.logger.info("Model preloaded: type=%s", model_type)
+    except Exception as e:
+        app.logger.exception("Failed to preload model: %s", e)
+
+
+# Run preload when not in debug/reload mode
+if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG"):
+    _preload_model()
+
+
 if __name__ == "__main__":
     # Render (and many PaaS) provide the HTTP port via the PORT env var.
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"}
+    app.run(host="0.0.0.0", port=port, debug=debug)

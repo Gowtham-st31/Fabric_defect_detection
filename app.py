@@ -2,6 +2,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import threading
@@ -55,24 +56,24 @@ def get_model():
 
                 if yolov5_incompatible or missing_yolov5_code:
                     app.logger.warning(
-                        "MODEL_PATH=%s is YOLOv5 format. Loading via torch.hub...",
+                        "MODEL_PATH=%s is YOLOv5 format. Loading from local yolov5_local...",
                         model_path,
                     )
                     try:
-                        _model = torch.hub.load(
-                            "ultralytics/yolov5",
-                            "custom",
-                            path=model_path,
-                            force_reload=False,
-                            trust_repo=True,
-                        )
+                        # Load from bundled yolov5_local instead of torch.hub (avoids GitHub API rate limits)
+                        yolov5_dir = os.path.join(ROOT, "yolov5_local")
+                        if yolov5_dir not in sys.path:
+                            sys.path.insert(0, yolov5_dir)
+                        
+                        from hubconf import custom
+                        _model = custom(path=model_path)
                         _model_type = "yolov5"
-                        app.logger.info("Model loaded successfully as YOLOv5 via torch.hub")
+                        app.logger.info("Model loaded successfully as YOLOv5 from local code")
                         # Rename class labels to "defect"
                         if hasattr(_model, "names"):
                             _model.names = {k: "defect" for k in _model.names}
                     except Exception as e2:
-                        app.logger.exception("torch.hub.load failed: %s", e2)
+                        app.logger.exception("Local YOLOv5 load failed: %s", e2)
                         raise RuntimeError(
                             f"Failed to load YOLOv5 model from '{model_path}': {e2}"
                         ) from e

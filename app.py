@@ -18,6 +18,7 @@ os.environ.setdefault("MKL_NUM_THREADS", os.environ.get("MKL_NUM_THREADS", "1"))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", os.environ.get("OPENBLAS_NUM_THREADS", "1"))
 os.environ.setdefault("NUMEXPR_NUM_THREADS", os.environ.get("NUMEXPR_NUM_THREADS", "1"))
 
+import torch
 from ultralytics import YOLO
 
 app = Flask(__name__)
@@ -27,17 +28,50 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 _model_lock = threading.Lock()
 _predict_lock = threading.Lock()
 _model = None
+_model_type = None  # "yolov8" or "yolov5"
 
 
-def get_model() -> YOLO:
-    global _model
+def get_model():
+    """Return (model, model_type) where model_type is 'yolov8' or 'yolov5'."""
+    global _model, _model_type
     if _model is not None:
-        return _model
+        return _model, _model_type
     with _model_lock:
         if _model is None:
             model_path = os.environ.get("MODEL_PATH") or os.path.join(ROOT, "model", "best.pt")
-            _model = YOLO(model_path)
-        return _model
+            try:
+                _model = YOLO(model_path)
+                _model_type = "yolov8"
+            except Exception as e:
+                # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
+                msg = str(e) or ""
+                yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
+                missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
+
+                if yolov5_incompatible or missing_yolov5_code:
+                    app.logger.warning(
+                        "MODEL_PATH=%s is YOLOv5 format. Loading via torch.hub...",
+                        model_path,
+                    )
+                    try:
+                        _model = torch.hub.load(
+                            "ultralytics/yolov5",
+                            "custom",
+                            path=model_path,
+                            force_reload=False,
+                            trust_repo=True,
+                        )
+                        _model_type = "yolov5"
+                        # Rename class labels to "defect"
+                        if hasattr(_model, "names"):
+                            _model.names = {k: "defect" for k in _model.names}
+                    except Exception as e2:
+                        raise RuntimeError(
+                            f"Failed to load YOLOv5 model from '{model_path}': {e2}"
+                        ) from e
+                else:
+                    raise
+        return _model, _model_type
 
 _live_lock = threading.Lock()
 _live_state = {"defect": False, "score": 0.0, "ts": 0.0}
@@ -57,27 +91,45 @@ def _get_live_state() -> dict:
 
 def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float]:
     # Allow operators (e.g., Render) to reduce latency/memory via env vars.
-    imgsz = int(os.environ.get("MODEL_IMGSZ", "416"))
+    imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
     device = os.environ.get("MODEL_DEVICE")  # e.g. 'cpu' or '0'
 
+    model, model_type = get_model()
+
     with _predict_lock:
-        results = get_model().predict(
-            source=frame,
-            conf=conf_thres,
-            imgsz=imgsz,
-            device=device,
-            verbose=False,
-        )
-    r0 = results[0]
-    boxed = r0.plot()
+        if model_type == "yolov5":
+            # YOLOv5 via torch.hub
+            model.conf = conf_thres
+            if device:
+                model.to(device)
+            results = model(frame, size=imgsz)
+            # Render boxes on image
+            boxed = np.array(results.render()[0])
+            # Get detections: results.xyxy[0] is tensor of [x1, y1, x2, y2, conf, cls]
+            dets = results.xyxy[0]
+            if len(dets) > 0:
+                max_conf = float(dets[:, 4].max().item())
+                return boxed, True, max_conf
+            return boxed, False, 0.0
+        else:
+            # YOLOv8/YOLO11 via ultralytics
+            results = model.predict(
+                source=frame,
+                conf=conf_thres,
+                imgsz=imgsz,
+                device=device,
+                verbose=False,
+            )
+            r0 = results[0]
+            boxed = r0.plot()
 
-    boxes = getattr(r0, "boxes", None)
-    if boxes is None or len(boxes) == 0:
-        return boxed, False, 0.0
+            boxes = getattr(r0, "boxes", None)
+            if boxes is None or len(boxes) == 0:
+                return boxed, False, 0.0
 
-    conf = boxes.conf
-    max_conf = float(conf.max().item()) if conf is not None and len(conf) else 0.0
-    return boxed, True, max_conf
+            conf = boxes.conf
+            max_conf = float(conf.max().item()) if conf is not None and len(conf) else 0.0
+            return boxed, True, max_conf
 
 
 @app.route("/")
@@ -125,12 +177,15 @@ def upload_image():
     if img is None:
         return {"error": "Invalid image"}, 400
 
-    conf_thres = float(os.environ.get("CONF_THRES", "0.25"))
+    conf_thres = float(os.environ.get("CONF_THRES", "0.1"))
     try:
         boxed, defect, score = predict_and_annotate(img, conf_thres)
     except Exception as e:
         app.logger.exception("Inference failed for /upload-image")
-        return {"error": f"Inference failed: {type(e).__name__}"}, 500
+        msg = (str(e) or "").strip()
+        if len(msg) > 600:
+            msg = msg[:600] + "…"
+        return {"error": "Inference failed", "type": type(e).__name__, "message": msg}, 500
 
     ok, enc = cv2.imencode(".jpg", boxed)
     if not ok:
@@ -185,7 +240,10 @@ def upload_video():
             shutil.rmtree(frame_dir, ignore_errors=True)
             os.unlink(out_path)
             app.logger.exception("Inference failed for /upload-video")
-            return {"error": f"Inference failed: {type(e).__name__}"}, 500
+            msg = (str(e) or "").strip()
+            if len(msg) > 600:
+                msg = msg[:600] + "…"
+            return {"error": "Inference failed", "type": type(e).__name__, "message": msg}, 500
         frame_path = os.path.join(frame_dir, f"frame_{frame_idx:06d}.jpg")
         ok = cv2.imwrite(frame_path, boxed, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         if not ok:
@@ -339,24 +397,37 @@ def live():
             if frame_idx % infer_every == 0 or last_jpeg is None:
                 try:
                     with _predict_lock:
-                        results = get_model().predict(
-                            source=frame,
-                            conf=conf_thres,
-                            imgsz=imgsz,
-                            device=os.environ.get("MODEL_DEVICE"),
-                            verbose=False,
-                        )
-                    r0 = results[0]
-                    boxed = r0.plot()
+                        model, model_type = get_model()
+                        if model_type == "yolov5":
+                            model.conf = conf_thres
+                            results = model(frame, size=imgsz)
+                            boxed = np.array(results.render()[0])
+                            dets = results.xyxy[0]
+                            if len(dets) > 0:
+                                last_score = float(dets[:, 4].max().item())
+                                last_defect = True
+                            else:
+                                last_score = 0.0
+                                last_defect = False
+                        else:
+                            results = model.predict(
+                                source=frame,
+                                conf=conf_thres,
+                                imgsz=imgsz,
+                                device=os.environ.get("MODEL_DEVICE"),
+                                verbose=False,
+                            )
+                            r0 = results[0]
+                            boxed = r0.plot()
 
-                    boxes = getattr(r0, "boxes", None)
-                    if boxes is not None and len(boxes) > 0:
-                        conf = getattr(boxes, "conf", None)
-                        last_score = float(conf.max().item()) if conf is not None and len(conf) else 0.0
-                        last_defect = True
-                    else:
-                        last_score = 0.0
-                        last_defect = False
+                            boxes = getattr(r0, "boxes", None)
+                            if boxes is not None and len(boxes) > 0:
+                                conf = getattr(boxes, "conf", None)
+                                last_score = float(conf.max().item()) if conf is not None and len(conf) else 0.0
+                                last_defect = True
+                            else:
+                                last_score = 0.0
+                                last_defect = False
 
                     _set_live_state(last_defect, last_score)
                 except Exception:

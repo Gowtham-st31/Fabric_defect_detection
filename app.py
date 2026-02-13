@@ -40,6 +40,14 @@ def get_model():
     with _model_lock:
         if _model is None:
             model_path = os.environ.get("MODEL_PATH") or os.path.join(ROOT, "model", "best.pt")
+            
+            # If ONNX model is specified but causing issues, try .pt fallback
+            if model_path.endswith('.onnx'):
+                pt_fallback = model_path.replace('.onnx', '.pt')
+                if os.path.exists(pt_fallback):
+                    app.logger.info("ONNX model specified, but trying .pt fallback first: %s", pt_fallback)
+                    model_path = pt_fallback
+            
             app.logger.info("Loading model from: %s", model_path)
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -51,6 +59,27 @@ def get_model():
                 # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
                 msg = str(e) or ""
                 app.logger.warning("YOLO() failed: %s", msg)
+                
+                # Check for ONNX Runtime version mismatch (IR version unsupported)
+                onnx_ir_error = "Unsupported model IR version" in msg or "ORT_INVALID_ARGUMENT" in msg
+                if onnx_ir_error:
+                    # Try to fall back to .pt file if available
+                    pt_fallback = model_path.replace('.onnx', '.pt')
+                    if model_path.endswith('.onnx') and os.path.exists(pt_fallback):
+                        app.logger.warning("ONNX model IR version not supported, trying .pt fallback: %s", pt_fallback)
+                        try:
+                            _model = YOLO(pt_fallback)
+                            _model_type = "yolov8"
+                            app.logger.info("Model loaded successfully from .pt fallback")
+                            return _model, _model_type
+                        except Exception as e_pt:
+                            app.logger.warning("PT fallback also failed: %s", e_pt)
+                    raise RuntimeError(
+                        f"ONNX Runtime version mismatch. Your onnxruntime doesn't support IR version 10. "
+                        f"Please upgrade onnxruntime: pip install onnxruntime>=1.18.0, "
+                        f"or use the .pt model file instead."
+                    ) from e
+                
                 yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
                 missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
 

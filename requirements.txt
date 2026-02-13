@@ -10,5 +10,7 @@ gitpython>=3.1
 # Server-friendly OpenCV (no GUI deps)
 opencv-python-headless>=4.8
 imageio-ffmpeg>=0.4
+# ONNX Runtime with support for IR version 10
+onnxruntime>=1.18.0
 # Production WSGI server (Linux)
 gunicorn>=21

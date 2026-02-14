@@ -39,6 +39,18 @@ def _default_model_specs() -> list[dict]:
 
     User requirement: always run all three models by default.
     """
+    prefer_onnx = os.environ.get("PREFER_ONNX", "1").strip().lower() not in {"0", "false", "no"}
+
+    # Render/Linux hosts often have tight memory; ONNX Runtime is much lighter than loading 3x PyTorch models.
+    if prefer_onnx and os.name != "nt":
+        onnx_specs = [
+            {"name": "best", "path": os.path.join(ROOT, "model", "best.onnx")},
+            {"name": "best_old", "path": os.path.join(ROOT, "model", "best(old).onnx")},
+            {"name": "yolo11n", "path": os.path.join(ROOT, "yolo11n.onnx")},
+        ]
+        if all(os.path.exists(s["path"]) for s in onnx_specs):
+            return onnx_specs
+
     return [
         {"name": "best", "path": os.path.join(ROOT, "model", "best.pt")},
         {"name": "best_old", "path": os.path.join(ROOT, "model", "best(old).pt")},

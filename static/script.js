@@ -133,7 +133,21 @@ async function startClientLive() {
 
                 const res = await fetch(`/upload-image?t=${Date.now()}`, { method: "POST", body: formData, cache: "no-store" });
                 if (!res.ok) {
-                    const text = await res.text();
+                    let text = await res.text();
+                    try {
+                        const j = JSON.parse(text);
+                        if (j) {
+                            const err = typeof j.error === "string" ? j.error : "Request failed";
+                            const msg = typeof j.message === "string" ? j.message : "";
+                            const typ = typeof j.type === "string" ? j.type : "";
+                            const parts = [err];
+                            if (typ) parts.push(`(${typ})`);
+                            if (msg) parts.push(`- ${msg}`);
+                            text = parts.join(" ").trim();
+                        }
+                    } catch {
+                        // ignore
+                    }
                     throw new Error(text || `Request failed (${res.status})`);
                 }
 
@@ -311,7 +325,15 @@ async function detect() {
             let text = await res.text();
             try {
                 const j = JSON.parse(text);
-                if (j && typeof j.error === "string") text = j.error;
+                if (j) {
+                    const err = typeof j.error === "string" ? j.error : "Request failed";
+                    const msg = typeof j.message === "string" ? j.message : "";
+                    const typ = typeof j.type === "string" ? j.type : "";
+                    const parts = [err];
+                    if (typ) parts.push(`(${typ})`);
+                    if (msg) parts.push(`- ${msg}`);
+                    text = parts.join(" ").trim();
+                }
             } catch {
                 // ignore
             }

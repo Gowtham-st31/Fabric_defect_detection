@@ -28,87 +28,94 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 _model_lock = threading.Lock()
 _predict_lock = threading.Lock()
-_model = None
-_model_type = None  # "yolov8" or "yolov5"
+
+# Each entry is a dict:
+# {"name": str, "path": str, "model": object, "type": "yolov8"|"yolov5"}
+_models = None
 
 
-def get_model():
+def _default_model_specs() -> list[dict]:
+    """Return the default 3-model ensemble spec.
+
+    User requirement: always run all three models by default.
+    """
+    return [
+        {"name": "best", "path": os.path.join(ROOT, "model", "best.pt")},
+        {"name": "best_old", "path": os.path.join(ROOT, "model", "best(old).pt")},
+        {"name": "yolo11n", "path": os.path.join(ROOT, "yolo11n.pt")},
+    ]
+
+
+def _load_one_model(model_path: str):
     """Return (model, model_type) where model_type is 'yolov8' or 'yolov5'."""
-    global _model, _model_type
-    if _model is not None:
-        return _model, _model_type
-    with _model_lock:
-        if _model is None:
-            model_path = os.environ.get("MODEL_PATH") or os.path.join(ROOT, "model", "best.pt")
-            
-            # If ONNX model is specified but causing issues, try .pt fallback
-            if model_path.endswith('.onnx'):
-                pt_fallback = model_path.replace('.onnx', '.pt')
-                if os.path.exists(pt_fallback):
-                    app.logger.info("ONNX model specified, but trying .pt fallback first: %s", pt_fallback)
-                    model_path = pt_fallback
-            
-            app.logger.info("Loading model from: %s", model_path)
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found: {model_path}")
-            try:
-                _model = YOLO(model_path)
-                _model_type = "yolov8"
-                app.logger.info("Model loaded successfully as YOLOv8/YOLO11")
-            except Exception as e:
-                # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
-                msg = str(e) or ""
-                app.logger.warning("YOLO() failed: %s", msg)
-                
-                # Check for ONNX Runtime version mismatch (IR version unsupported)
-                onnx_ir_error = "Unsupported model IR version" in msg or "ORT_INVALID_ARGUMENT" in msg
-                if onnx_ir_error:
-                    # Try to fall back to .pt file if available
-                    pt_fallback = model_path.replace('.onnx', '.pt')
-                    if model_path.endswith('.onnx') and os.path.exists(pt_fallback):
-                        app.logger.warning("ONNX model IR version not supported, trying .pt fallback: %s", pt_fallback)
-                        try:
-                            _model = YOLO(pt_fallback)
-                            _model_type = "yolov8"
-                            app.logger.info("Model loaded successfully from .pt fallback")
-                            return _model, _model_type
-                        except Exception as e_pt:
-                            app.logger.warning("PT fallback also failed: %s", e_pt)
-                    raise RuntimeError(
-                        f"ONNX Runtime version mismatch. Your onnxruntime doesn't support IR version 10. "
-                        f"Please upgrade onnxruntime: pip install onnxruntime>=1.18.0, "
-                        f"or use the .pt model file instead."
-                    ) from e
-                
-                yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
-                missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
+    app.logger.info("Loading model from: %s", model_path)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    try:
+        model = YOLO(model_path)
+        model_type = "yolov8"
+        app.logger.info("Model loaded successfully as YOLOv8/YOLO11")
+        return model, model_type
+    except Exception as e:
+        # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
+        msg = str(e) or ""
+        app.logger.warning("YOLO() failed: %s", msg)
 
-                if yolov5_incompatible or missing_yolov5_code:
-                    app.logger.warning(
-                        "MODEL_PATH=%s is YOLOv5 format. Loading from local yolov5_local...",
-                        model_path,
-                    )
-                    try:
-                        # Load from bundled yolov5_local instead of torch.hub (avoids GitHub API rate limits)
-                        yolov5_dir = os.path.join(ROOT, "yolov5_local")
-                        if yolov5_dir not in sys.path:
-                            sys.path.insert(0, yolov5_dir)
-                        
-                        from hubconf import custom
-                        _model = custom(path=model_path)
-                        _model_type = "yolov5"
-                        app.logger.info("Model loaded successfully as YOLOv5 from local code")
-                        # Rename class labels to "defect"
-                        if hasattr(_model, "names"):
-                            _model.names = {k: "defect" for k in _model.names}
-                    except Exception as e2:
-                        app.logger.exception("Local YOLOv5 load failed: %s", e2)
-                        raise RuntimeError(
-                            f"Failed to load YOLOv5 model from '{model_path}': {e2}"
-                        ) from e
-                else:
-                    raise
-        return _model, _model_type
+        yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
+        missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
+
+        if yolov5_incompatible or missing_yolov5_code:
+            app.logger.warning("%s looks like YOLOv5 format. Loading from local yolov5_local...", model_path)
+            try:
+                yolov5_dir = os.path.join(ROOT, "yolov5_local")
+                if yolov5_dir not in sys.path:
+                    sys.path.insert(0, yolov5_dir)
+
+                from hubconf import custom
+
+                model = custom(path=model_path)
+                model_type = "yolov5"
+                app.logger.info("Model loaded successfully as YOLOv5 from local code")
+                if hasattr(model, "names"):
+                    model.names = {k: "defect" for k in model.names}
+                return model, model_type
+            except Exception as e2:
+                app.logger.exception("Local YOLOv5 load failed: %s", e2)
+                raise RuntimeError(f"Failed to load YOLOv5 model from '{model_path}': {e2}") from e
+        raise
+
+
+def get_models() -> list[dict]:
+    """Return list of loaded models.
+
+    By default, loads and uses all three: best.pt, best(old).pt, yolo11n.pt.
+
+    Optional override (no UI prompt): set MODEL_PATHS to a semicolon-separated list.
+    Example: MODEL_PATHS='model/best.pt;model/best(old).pt;yolo11n.pt'
+    """
+    global _models
+    if _models is not None:
+        return _models
+    with _model_lock:
+        if _models is None:
+            specs = []
+
+            model_paths_env = os.environ.get("MODEL_PATHS")
+            if model_paths_env:
+                parts = [p.strip() for p in model_paths_env.split(";") if p.strip()]
+                for idx, p in enumerate(parts):
+                    p_abs = p if os.path.isabs(p) else os.path.join(ROOT, p)
+                    specs.append({"name": f"model{idx+1}", "path": p_abs})
+            else:
+                specs = _default_model_specs()
+
+            loaded = []
+            for spec in specs:
+                model, model_type = _load_one_model(spec["path"])
+                loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
+
+            _models = loaded
+        return _models
 
 _live_lock = threading.Lock()
 _live_state = {"defect": False, "score": 0.0, "ts": 0.0}
@@ -126,47 +133,99 @@ def _get_live_state() -> dict:
         return dict(_live_state)
 
 
+def _ensure_uint8_bgr(img: np.ndarray) -> np.ndarray:
+    if img.dtype != np.uint8:
+        img = np.clip(img, 0, 255).astype(np.uint8)
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return img
+
+
+def _draw_box(img: np.ndarray, xyxy: tuple[float, float, float, float], label: str) -> None:
+    x1, y1, x2, y2 = xyxy
+    x1i, y1i = int(max(0, round(x1))), int(max(0, round(y1)))
+    x2i, y2i = int(max(0, round(x2))), int(max(0, round(y2)))
+    cv2.rectangle(img, (x1i, y1i), (x2i, y2i), (0, 0, 255), 2)
+    if label:
+        cv2.putText(img, label, (x1i, max(0, y1i - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+
+def _predict_boxes_yolov5(model, frame: np.ndarray, conf_thres: float, imgsz: int, device: str | None):
+    model.conf = conf_thres
+    if device:
+        model.to(device)
+    results = model(frame, size=imgsz)
+    dets = results.xyxy[0]
+    if dets is None or len(dets) == 0:
+        return []
+    out = []
+    for row in dets:
+        x1, y1, x2, y2, conf, cls = row.tolist()
+        out.append((float(x1), float(y1), float(x2), float(y2), float(conf)))
+    return out
+
+
+def _predict_boxes_yolov8(model, frame: np.ndarray, conf_thres: float, imgsz: int, device: str | None):
+    results = model.predict(
+        source=frame,
+        conf=conf_thres,
+        imgsz=imgsz,
+        device=device,
+        verbose=False,
+    )
+    r0 = results[0]
+    boxes = getattr(r0, "boxes", None)
+    if boxes is None or len(boxes) == 0:
+        return []
+    xyxy = boxes.xyxy
+    conf = boxes.conf
+    out = []
+    for i in range(len(boxes)):
+        x1, y1, x2, y2 = xyxy[i].tolist()
+        c = float(conf[i].item()) if conf is not None else 0.0
+        out.append((float(x1), float(y1), float(x2), float(y2), c))
+    return out
+
+
 def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float]:
-    # Allow operators (e.g., Render) to reduce latency/memory via env vars.
+    """Run all 3 models and draw the union of detections."""
     imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
     device = os.environ.get("MODEL_DEVICE")  # e.g. 'cpu' or '0'
 
-    model, model_type = get_model()
+    models = get_models()
+    boxed = _ensure_uint8_bgr(frame.copy())
+
+    any_defect = False
+    max_conf = 0.0
 
     with _predict_lock:
-        if model_type == "yolov5":
-            # YOLOv5 via torch.hub
-            model.conf = conf_thres
-            if device:
-                model.to(device)
-            results = model(frame, size=imgsz)
-            # Render boxes on image
-            boxed = np.array(results.render()[0])
-            # Get detections: results.xyxy[0] is tensor of [x1, y1, x2, y2, conf, cls]
-            dets = results.xyxy[0]
-            if len(dets) > 0:
-                max_conf = float(dets[:, 4].max().item())
-                return boxed, True, max_conf
-            return boxed, False, 0.0
-        else:
-            # YOLOv8/YOLO11 via ultralytics
-            results = model.predict(
-                source=frame,
-                conf=conf_thres,
-                imgsz=imgsz,
-                device=device,
-                verbose=False,
-            )
-            r0 = results[0]
-            boxed = r0.plot()
+        for idx, entry in enumerate(models):
+            m = entry["model"]
+            mtype = entry["type"]
+            mname = entry["name"]
 
-            boxes = getattr(r0, "boxes", None)
-            if boxes is None or len(boxes) == 0:
-                return boxed, False, 0.0
+            if mtype == "yolov5":
+                dets = _predict_boxes_yolov5(m, frame, conf_thres, imgsz, device)
+            else:
+                dets = _predict_boxes_yolov8(m, frame, conf_thres, imgsz, device)
 
-            conf = boxes.conf
-            max_conf = float(conf.max().item()) if conf is not None and len(conf) else 0.0
-            return boxed, True, max_conf
+            for x1, y1, x2, y2, c in dets:
+                any_defect = True
+                max_conf = max(max_conf, float(c))
+                _draw_box(boxed, (x1, y1, x2, y2), f"defect {c:.2f}")
+
+            if dets:
+                cv2.putText(
+                    boxed,
+                    f"{mname}: {len(dets)}",
+                    (10, 24 + 22 * idx),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2,
+                )
+
+    return boxed, any_defect, max_conf
 
 
 @app.route("/")
@@ -433,38 +492,7 @@ def live():
             # Throttle inference to reduce lag (reuse last annotated frame in between).
             if frame_idx % infer_every == 0 or last_jpeg is None:
                 try:
-                    with _predict_lock:
-                        model, model_type = get_model()
-                        if model_type == "yolov5":
-                            model.conf = conf_thres
-                            results = model(frame, size=imgsz)
-                            boxed = np.array(results.render()[0])
-                            dets = results.xyxy[0]
-                            if len(dets) > 0:
-                                last_score = float(dets[:, 4].max().item())
-                                last_defect = True
-                            else:
-                                last_score = 0.0
-                                last_defect = False
-                        else:
-                            results = model.predict(
-                                source=frame,
-                                conf=conf_thres,
-                                imgsz=imgsz,
-                                device=os.environ.get("MODEL_DEVICE"),
-                                verbose=False,
-                            )
-                            r0 = results[0]
-                            boxed = r0.plot()
-
-                            boxes = getattr(r0, "boxes", None)
-                            if boxes is not None and len(boxes) > 0:
-                                conf = getattr(boxes, "conf", None)
-                                last_score = float(conf.max().item()) if conf is not None and len(conf) else 0.0
-                                last_defect = True
-                            else:
-                                last_score = 0.0
-                                last_defect = False
+                    boxed, last_defect, last_score = predict_and_annotate(frame, conf_thres)
 
                     _set_live_state(last_defect, last_score)
                 except Exception:
@@ -507,8 +535,8 @@ def stop_live_legacy():
 # Preload model at startup to catch errors early (especially on deployment)
 def _preload_model():
     try:
-        model, model_type = get_model()
-        app.logger.info("Model preloaded: type=%s", model_type)
+        models = get_models()
+        app.logger.info("Models preloaded: %s", ", ".join([m["name"] for m in models]))
     except Exception as e:
         app.logger.exception("Failed to preload model: %s", e)
 

@@ -343,6 +343,8 @@ def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr("ONNX
         f,
         verbose=False,
         opset_version=opset,
+        dynamo=False,  # legacy exporter (more stable for YOLOv5 graphs)
+        external_data=False,  # ensure single-file .onnx (Android loads from bytes)
         do_constant_folding=True,  # WARNING: DNN inference with torch>=1.12 may require do_constant_folding=False
         input_names=["images"],
         output_names=output_names,

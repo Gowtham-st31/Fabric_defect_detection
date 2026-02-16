@@ -49,7 +49,7 @@ def _default_model_specs() -> list[dict]:
     if prefer_onnx and os.name != "nt":
         onnx_specs = [
             {"name": "best", "path": os.path.join(ROOT, "model", "best.onnx")},
-            {"name": "best_old", "path": os.path.join(ROOT, "model", "best(old).onnx")},
+            {"name": "best_old", "path": os.path.join(ROOT, "model", "best_old.onnx")},
             {"name": "yolo11n", "path": os.path.join(ROOT, "yolo11n.onnx")},
         ]
         if all(os.path.exists(s["path"]) for s in onnx_specs):
@@ -57,7 +57,7 @@ def _default_model_specs() -> list[dict]:
 
     return [
         {"name": "best", "path": os.path.join(ROOT, "model", "best.pt")},
-        {"name": "best_old", "path": os.path.join(ROOT, "model", "best(old).pt")},
+        {"name": "best_old", "path": os.path.join(ROOT, "model", "best_old.pt")},
         {"name": "yolo11n", "path": os.path.join(ROOT, "yolo11n.pt")},
     ]
 
@@ -273,8 +273,10 @@ def get_models() -> list[dict]:
             # (important on Render 512 MB free tier).
             loaded = []
             for spec in specs:
+                app.logger.info("Loading model '%s' from %s ...", spec["name"], spec["path"])
                 model, model_type = _load_one_model(spec["path"])
                 loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
+                app.logger.info("  -> '%s' loaded as %s", spec["name"], model_type)
 
             _models = loaded
         return _models

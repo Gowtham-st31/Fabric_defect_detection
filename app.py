@@ -19,6 +19,7 @@ os.environ.setdefault("MKL_NUM_THREADS", os.environ.get("MKL_NUM_THREADS", "1"))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", os.environ.get("OPENBLAS_NUM_THREADS", "1"))
 os.environ.setdefault("NUMEXPR_NUM_THREADS", os.environ.get("NUMEXPR_NUM_THREADS", "1"))
 
+import onnxruntime as ort
 import torch
 from ultralytics import YOLO
 
@@ -30,7 +31,7 @@ _model_lock = threading.Lock()
 _predict_lock = threading.Lock()
 
 # Each entry is a dict:
-# {"name": str, "path": str, "model": object, "type": "yolov8"|"yolov5"}
+# {"name": str, "path": str, "model": object, "type": "yolov8"|"yolov5"|"onnxrt"}
 _models = None
 
 
@@ -58,27 +59,153 @@ def _default_model_specs() -> list[dict]:
     ]
 
 
+# ---------------------------------------------------------------------------
+#  Direct ONNX Runtime helpers (bypass Ultralytics AutoBackend entirely)
+# ---------------------------------------------------------------------------
+
+def _letterbox(img: np.ndarray, new_shape: int = 640,
+               color: tuple[int, int, int] = (114, 114, 114)):
+    """Resize + pad to *new_shape* square, preserving aspect ratio.
+
+    Returns (padded_img, scale_ratio, (pad_w, pad_h)).
+    """
+    h, w = img.shape[:2]
+    r = min(new_shape / h, new_shape / w)
+    new_w, new_h = int(round(w * r)), int(round(h * r))
+    dw, dh = (new_shape - new_w) / 2, (new_shape - new_h) / 2
+
+    if (w, h) != (new_w, new_h):
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img = cv2.copyMakeBorder(img, top, bottom, left, right,
+                             cv2.BORDER_CONSTANT, value=color)
+    return img, r, (dw, dh)
+
+
+def _nms_numpy(boxes: np.ndarray, scores: np.ndarray,
+               iou_threshold: float = 0.45) -> list[int]:
+    """Pure-numpy greedy NMS.  *boxes* is (N, 4) as x1y1x2y2."""
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    keep: list[int] = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(int(i))
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+        iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
+        order = order[np.where(iou <= iou_threshold)[0] + 1]
+    return keep
+
+
+def _predict_boxes_onnxrt(session: ort.InferenceSession, frame: np.ndarray,
+                          conf_thres: float, imgsz: int,
+                          device: str | None = None) -> list[tuple]:
+    """Run YOLO-style detection via ONNX Runtime directly.
+
+    Works with both YOLOv8/v11 ONNX exports (output shape [1, 4+nc, N])
+    and YOLOv5-style exports ([1, N, 4+nc+1]).
+    """
+    orig_h, orig_w = frame.shape[:2]
+
+    # --- pre-process --------------------------------------------------------
+    img, ratio, (dw, dh) = _letterbox(frame, imgsz)
+    img = img[:, :, ::-1]                           # BGR → RGB
+    img = img.transpose(2, 0, 1)                    # HWC → CHW
+    img = np.ascontiguousarray(img, dtype=np.float32) / 255.0
+    img = img[np.newaxis, ...]                      # add batch dim
+
+    # --- run ----------------------------------------------------------------
+    input_name = session.get_inputs()[0].name
+    output = session.run(None, {input_name: img})[0]  # first output tensor
+
+    if output.ndim != 3:
+        return []
+
+    # --- normalise shape to (N, 4+nc) --------------------------------------
+    # YOLOv8/v11: [1, 4+nc, N]  →  transpose
+    # YOLOv5:     [1, N, 5+nc]  →  already correct orientation
+    if output.shape[1] < output.shape[2]:
+        preds = output[0].T                         # (N, 4+nc)
+    else:
+        preds = output[0]                           # (N, 5+nc) — YOLOv5
+
+    num_cols = preds.shape[1]
+
+    # YOLOv5 has an objectness column at index 4; YOLOv8+ does not.
+    if num_cols >= 6:                               # likely YOLOv5 (4+1+nc)
+        obj = preds[:, 4]
+        cls_scores = preds[:, 5:] * obj[:, None]
+    else:                                           # YOLOv8/v11 (4+nc)
+        cls_scores = preds[:, 4:]
+
+    max_scores = cls_scores.max(axis=1)
+    mask = max_scores >= conf_thres
+    preds, max_scores = preds[mask], max_scores[mask]
+    if len(preds) == 0:
+        return []
+
+    # cx, cy, w, h → x1, y1, x2, y2
+    boxes = np.empty((len(preds), 4), dtype=np.float32)
+    boxes[:, 0] = preds[:, 0] - preds[:, 2] / 2
+    boxes[:, 1] = preds[:, 1] - preds[:, 3] / 2
+    boxes[:, 2] = preds[:, 0] + preds[:, 2] / 2
+    boxes[:, 3] = preds[:, 1] + preds[:, 3] / 2
+
+    # NMS
+    keep = _nms_numpy(boxes, max_scores, iou_threshold=0.45)
+
+    out: list[tuple] = []
+    for i in keep:
+        x1, y1, x2, y2 = boxes[i]
+        # undo letterbox padding + scale
+        x1 = float(np.clip((x1 - dw) / ratio, 0, orig_w))
+        y1 = float(np.clip((y1 - dh) / ratio, 0, orig_h))
+        x2 = float(np.clip((x2 - dw) / ratio, 0, orig_w))
+        y2 = float(np.clip((y2 - dh) / ratio, 0, orig_h))
+        out.append((x1, y1, x2, y2, float(max_scores[i])))
+    return out
+
+
+# ---------------------------------------------------------------------------
+#  Model loading
+# ---------------------------------------------------------------------------
+
 def _load_one_model(model_path: str):
-    """Return (model, model_type) where model_type is 'yolov8' or 'yolov5'."""
+    """Return (model, model_type) where model_type is 'yolov8', 'yolov5', or 'onnxrt'."""
     app.logger.info("Loading model from: %s", model_path)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
+
+    ext = os.path.splitext(model_path)[1].lower()
+
+    # ----- ONNX: load with onnxruntime directly (avoids Ultralytics
+    #       AutoBackend metadata issues such as KeyError: 'task'). -----
+    if ext == ".onnx":
+        providers = ["CPUExecutionProvider"]
+        try:
+            avail = ort.get_available_providers()
+            if "CUDAExecutionProvider" in avail:
+                providers.insert(0, "CUDAExecutionProvider")
+        except Exception:
+            pass
+        session = ort.InferenceSession(model_path, providers=providers)
+        inp = session.get_inputs()[0]
+        app.logger.info(
+            "ONNX model loaded via onnxruntime  input=%s  shape=%s  providers=%s",
+            inp.name, inp.shape, session.get_providers(),
+        )
+        return session, "onnxrt"
+
+    # ----- .pt / other: try Ultralytics first, fall back to YOLOv5 -----
     try:
-        # Ultralytics may require an explicit task for some exported formats (notably ONNX)
-        # when model metadata is missing (otherwise it can raise KeyError: 'task' at predict-time).
-        ext = os.path.splitext(model_path)[1].lower()
-        if ext in {".onnx", ".engine", ".tflite", ".pb", ".savedmodel"}:
-            try:
-                model = YOLO(model_path, task="detect")
-            except TypeError:
-                # Older Ultralytics versions may not accept the task kwarg.
-                model = YOLO(model_path)
-                try:
-                    model.task = "detect"
-                except Exception:
-                    pass
-        else:
-            model = YOLO(model_path)
+        model = YOLO(model_path)
         model_type = "yolov8"
         app.logger.info("Model loaded successfully as YOLOv8/YOLO11")
         return model, model_type
@@ -86,17 +213,6 @@ def _load_one_model(model_path: str):
         # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
         msg = str(e) or ""
         app.logger.warning("YOLO() failed: %s", msg)
-
-        # If an exported model is missing embedded metadata (e.g. ONNX without 'task'),
-        # retry with an explicit task.
-        if isinstance(e, KeyError) and str(e) in {"'task'", "task"}:
-            try:
-                model = YOLO(model_path, task="detect")
-                model_type = "yolov8"
-                app.logger.info("Retried load with task='detect' and succeeded")
-                return model, model_type
-            except Exception:
-                pass
 
         yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
         missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg
@@ -241,7 +357,9 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
             mtype = entry["type"]
             mname = entry["name"]
 
-            if mtype == "yolov5":
+            if mtype == "onnxrt":
+                dets = _predict_boxes_onnxrt(m, frame, conf_thres, imgsz, device)
+            elif mtype == "yolov5":
                 dets = _predict_boxes_yolov5(m, frame, conf_thres, imgsz, device)
             else:
                 dets = _predict_boxes_yolov8(m, frame, conf_thres, imgsz, device)

@@ -6,7 +6,6 @@ import sys
 import tempfile
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Generator
 
 from flask import Flask, Response, render_template, request, send_file
@@ -21,8 +20,11 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", os.environ.get("OPENBLAS_NUM_THREA
 os.environ.setdefault("NUMEXPR_NUM_THREADS", os.environ.get("NUMEXPR_NUM_THREADS", "1"))
 
 import onnxruntime as ort
-import torch
-from ultralytics import YOLO
+
+# NOTE: torch and ultralytics are NOT imported at module level.
+# They consume ~200-300 MB just on import, which causes OOM on Render's
+# 512 MB free tier.  They are imported lazily inside _load_one_model()
+# only when a .pt model is actually loaded (the ONNX path never needs them).
 
 app = Flask(__name__)
 
@@ -205,6 +207,10 @@ def _load_one_model(model_path: str):
         return session, "onnxrt"
 
     # ----- .pt / other: try Ultralytics first, fall back to YOLOv5 -----
+    #  Lazy-import torch + ultralytics to avoid ~200-300 MB overhead when
+    #  only ONNX models are used (e.g. Render free tier).
+    from ultralytics import YOLO  # noqa: F811  (intentionally lazy)
+
     try:
         model = YOLO(model_path)
         model_type = "yolov8"
@@ -263,16 +269,12 @@ def get_models() -> list[dict]:
             else:
                 specs = _default_model_specs()
 
-            # Load models concurrently to reduce total startup time.
-            def _load_spec(spec):
+            # Load models sequentially to keep peak memory low
+            # (important on Render 512 MB free tier).
+            loaded = []
+            for spec in specs:
                 model, model_type = _load_one_model(spec["path"])
-                return {"name": spec["name"], "path": spec["path"], "model": model, "type": model_type}
-
-            loaded = [None] * len(specs)
-            with ThreadPoolExecutor(max_workers=len(specs)) as pool:
-                futures = {pool.submit(_load_spec, s): i for i, s in enumerate(specs)}
-                for fut in as_completed(futures):
-                    loaded[futures[fut]] = fut.result()  # propagates exceptions
+                loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
 
             _models = loaded
         return _models

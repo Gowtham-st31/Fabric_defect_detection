@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Generator
 
 from flask import Flask, Response, render_template, request, send_file
@@ -262,10 +263,16 @@ def get_models() -> list[dict]:
             else:
                 specs = _default_model_specs()
 
-            loaded = []
-            for spec in specs:
+            # Load models concurrently to reduce total startup time.
+            def _load_spec(spec):
                 model, model_type = _load_one_model(spec["path"])
-                loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
+                return {"name": spec["name"], "path": spec["path"], "model": model, "type": model_type}
+
+            loaded = [None] * len(specs)
+            with ThreadPoolExecutor(max_workers=len(specs)) as pool:
+                futures = {pool.submit(_load_spec, s): i for i, s in enumerate(specs)}
+                for fut in as_completed(futures):
+                    loaded[futures[fut]] = fut.result()  # propagates exceptions
 
             _models = loaded
         return _models
@@ -687,18 +694,42 @@ def stop_live_legacy():
     return "stopped"
 
 
-# Preload model at startup to catch errors early (especially on deployment)
-def _preload_model():
+# Preload models at startup and run a warmup inference so the first real
+# request doesn't incur extra latency (or trigger Render's 30-s proxy timeout).
+def _preload_models():
+    t0 = time.time()
     try:
         models = get_models()
-        app.logger.info("Models preloaded: %s", ", ".join([m["name"] for m in models]))
+        app.logger.info(
+            "Models preloaded in %.1fs: %s",
+            time.time() - t0,
+            ", ".join(m["name"] for m in models),
+        )
     except Exception as e:
-        app.logger.exception("Failed to preload model: %s", e)
+        app.logger.exception("Failed to preload models: %s", e)
+        return
+
+    # Warmup: run a tiny dummy image through each model so ONNX Runtime
+    # allocates its internal buffers *before* the first real request.
+    try:
+        dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+        imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
+        for entry in models:
+            m, mtype = entry["model"], entry["type"]
+            if mtype == "onnxrt":
+                _predict_boxes_onnxrt(m, dummy, 0.9, imgsz)
+            elif mtype == "yolov5":
+                _predict_boxes_yolov5(m, dummy, 0.9, imgsz, None)
+            else:
+                _predict_boxes_yolov8(m, dummy, 0.9, imgsz, None)
+        app.logger.info("Warmup inference complete (%.1fs total)", time.time() - t0)
+    except Exception as e:
+        app.logger.warning("Warmup inference failed (non-fatal): %s", e)
 
 
 # Run preload when not in debug/reload mode
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("FLASK_DEBUG"):
-    _preload_model()
+    _preload_models()
 
 
 if __name__ == "__main__":

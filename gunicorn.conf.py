@@ -1,9 +1,18 @@
 # Gunicorn configuration — auto-discovered when gunicorn runs from this directory.
-# Render start command: gunicorn app:app --bind 0.0.0.0:$PORT
-# (workers, threads, timeout can be overridden via CLI flags or env vars)
+#
+# Render start command (set in Dashboard → Settings → Start Command):
+#   gunicorn app:app --bind 0.0.0.0:$PORT
+#
+# Do NOT add --workers / --threads / --timeout on the command line;
+# they override this file.  Use env vars instead if needed.
 
-import multiprocessing
 import os
+
+# --- Pre-load the app BEFORE forking workers -----------------------------
+# This runs _preload_models() (+ warmup) once in the master process, so
+# workers are ready to serve immediately.  On a single-worker setup the
+# effect is the same: models are loaded before the port is opened.
+preload_app = True
 
 # --- Workers / threads ---------------------------------------------------
 # Render free tier has 512 MB RAM; keep 1 worker + 2 threads to avoid OOM

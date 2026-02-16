@@ -64,7 +64,21 @@ def _load_one_model(model_path: str):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     try:
-        model = YOLO(model_path)
+        # Ultralytics may require an explicit task for some exported formats (notably ONNX)
+        # when model metadata is missing (otherwise it can raise KeyError: 'task' at predict-time).
+        ext = os.path.splitext(model_path)[1].lower()
+        if ext in {".onnx", ".engine", ".tflite", ".pb", ".savedmodel"}:
+            try:
+                model = YOLO(model_path, task="detect")
+            except TypeError:
+                # Older Ultralytics versions may not accept the task kwarg.
+                model = YOLO(model_path)
+                try:
+                    model.task = "detect"
+                except Exception:
+                    pass
+        else:
+            model = YOLO(model_path)
         model_type = "yolov8"
         app.logger.info("Model loaded successfully as YOLOv8/YOLO11")
         return model, model_type
@@ -72,6 +86,17 @@ def _load_one_model(model_path: str):
         # Common case: a YOLOv5-trained .pt is not forwards-compatible with Ultralytics YOLOv8/YOLO11.
         msg = str(e) or ""
         app.logger.warning("YOLO() failed: %s", msg)
+
+        # If an exported model is missing embedded metadata (e.g. ONNX without 'task'),
+        # retry with an explicit task.
+        if isinstance(e, KeyError) and str(e) in {"'task'", "task"}:
+            try:
+                model = YOLO(model_path, task="detect")
+                model_type = "yolov8"
+                app.logger.info("Retried load with task='detect' and succeeded")
+                return model, model_type
+            except Exception:
+                pass
 
         yolov5_incompatible = isinstance(e, TypeError) and "YOLOv5 model" in msg
         missing_yolov5_code = isinstance(e, ModuleNotFoundError) and "No module named 'models'" in msg

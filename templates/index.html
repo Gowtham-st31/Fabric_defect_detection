@@ -1,61 +1,917 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Fabric Defect Detection</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/static/style.css?v=13">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FabricAI | Industrial Defect Detection</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-deep: #020617;
+            --bg-surface: #0f172a;
+            --bg-glass: rgba(30, 41, 59, 0.7);
+            --accent-cyan: #22d3ee;
+            --accent-blue: #3b82f6;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --status-clean: #10b981;
+            --status-defect: #ef4444;
+            --border-glass: rgba(255, 255, 255, 0.1);
+            --shadow-premium: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: -10%; right: -10%;
+            width: 40%; height: 40%;
+            background: radial-gradient(circle, rgba(34, 211, 238, 0.08) 0%, transparent 70%);
+            z-index: -1;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-glass);
+            background: rgba(2, 6, 23, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0; z-index: 100;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .logo {
+            display: flex; align-items: center; gap: 0.75rem;
+            font-weight: 700; font-size: 1.25rem;
+            letter-spacing: -0.025em; color: var(--text-primary);
+        }
+        .logo i { color: var(--accent-cyan); }
+
+        .mode-selector {
+            background: var(--bg-surface);
+            padding: 0.25rem; border-radius: 12px;
+            display: flex; gap: 0.25rem;
+            border: 1px solid var(--border-glass);
+        }
+
+        .mode-btn {
+            padding: 0.6rem 1.25rem; border-radius: 10px;
+            border: none; background: transparent;
+            color: var(--text-secondary); font-weight: 500;
+            cursor: pointer; transition: var(--transition-smooth);
+            display: flex; align-items: center; gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .mode-btn.active {
+            background: var(--accent-cyan);
+            color: var(--bg-deep);
+            box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+        }
+
+        .system-status {
+            display: flex; align-items: center; gap: 1.5rem;
+        }
+        .status-pill {
+            display: flex; align-items: center; gap: 0.5rem;
+            font-size: 0.875rem; color: var(--text-secondary);
+        }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--status-clean);
+            box-shadow: 0 0 8px var(--status-clean);
+        }
+
+        main {
+            flex: 1; max-width: 1400px;
+            margin: 2rem auto; width: 100%; padding: 0 2rem;
+        }
+
+        .view-container {
+            display: none;
+            animation: fadeInSlide 0.4s ease-out;
+        }
+        .view-container.active {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 2rem;
+        }
+        @keyframes fadeInSlide {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .glass-card {
+            background: var(--bg-glass);
+            border: 1px solid var(--border-glass);
+            border-radius: 24px; padding: 2rem;
+            backdrop-filter: blur(12px);
+            box-shadow: var(--shadow-premium);
+        }
+
+        .upload-zone {
+            border: 2px dashed var(--border-glass);
+            border-radius: 20px; padding: 4rem 2rem;
+            text-align: center; transition: var(--transition-smooth);
+            cursor: pointer;
+            display: flex; flex-direction: column;
+            align-items: center; gap: 1.5rem;
+        }
+        .upload-zone:hover {
+            border-color: var(--accent-cyan);
+            background: rgba(34, 211, 238, 0.05);
+        }
+        .upload-zone.drag-over {
+            border-color: var(--accent-cyan);
+            background: rgba(34, 211, 238, 0.08);
+        }
+
+        .preview-container {
+            display: none; position: relative;
+            border-radius: 16px; overflow: hidden;
+            background: #000;
+        }
+        .preview-image, .preview-container video {
+            width: 100%; display: block; opacity: 0.9;
+        }
+
+        .sidebar h3 {
+            font-size: 1.125rem; margin-bottom: 1.5rem;
+            color: var(--text-primary);
+        }
+        .stat-group {
+            display: flex; flex-direction: column; gap: 1rem;
+        }
+        .stat-item {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 1rem; border-radius: 12px;
+            border: 1px solid var(--border-glass);
+        }
+        .stat-label {
+            font-size: 0.75rem; text-transform: uppercase;
+            letter-spacing: 0.05em; color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+        .stat-value { font-size: 1.25rem; font-weight: 600; }
+
+        .badge {
+            display: inline-block; padding: 0.25rem 0.75rem;
+            border-radius: 999px; font-size: 0.75rem;
+            font-weight: 600; text-transform: uppercase;
+        }
+        .badge-clean { background: rgba(16, 185, 129, 0.1); color: var(--status-clean); border: 1px solid var(--status-clean); }
+        .badge-defect { background: rgba(239, 68, 68, 0.1); color: var(--status-defect); border: 1px solid var(--status-defect); }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: var(--bg-deep); border: none;
+            padding: 1rem 2rem; border-radius: 12px;
+            font-weight: 600; cursor: pointer;
+            width: 100%; margin-top: 1.5rem;
+            transition: var(--transition-smooth);
+            display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(34, 211, 238, 0.2);
+        }
+        .btn-primary:disabled {
+            opacity: 0.5; cursor: not-allowed; transform: none;
+        }
+
+        .btn-reset {
+            background: rgba(255,255,255,0.05);
+            color: var(--text-secondary); border: 1px solid var(--border-glass);
+            padding: 0.75rem 1.5rem; border-radius: 12px;
+            font-weight: 500; cursor: pointer;
+            width: 100%; margin-top: 0.75rem;
+            transition: var(--transition-smooth);
+        }
+        .btn-reset:hover { background: rgba(255,255,255,0.1); }
+
+        .video-wrapper {
+            position: relative; border-radius: 16px;
+            overflow: hidden; background: #000;
+        }
+        video { width: 100%; display: block; }
+
+        .camera-feed {
+            position: relative; width: 100%;
+            aspect-ratio: 16/9; background: #000;
+            border-radius: 16px; overflow: hidden;
+        }
+        #live-video, #live-result {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .live-overlay {
+            position: absolute; top: 1.5rem; right: 1.5rem;
+            padding: 0.75rem 1.25rem; border-radius: 12px;
+            backdrop-filter: blur(8px); background: rgba(0,0,0,0.6);
+            border: 1px solid var(--border-glass);
+            display: flex; align-items: center; gap: 0.75rem;
+            z-index: 10;
+        }
+
+        #toast {
+            position: fixed; bottom: 2rem; right: 2rem;
+            padding: 1rem 1.5rem;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-glass);
+            border-radius: 12px;
+            box-shadow: var(--shadow-premium);
+            display: flex; align-items: center; gap: 0.75rem;
+            transform: translateY(150%);
+            transition: var(--transition-smooth);
+            z-index: 1000;
+        }
+        #toast.visible { transform: translateY(0); }
+
+        .loader {
+            width: 24px; height: 24px;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @media (max-width: 900px) {
+            .view-container.active { grid-template-columns: 1fr; }
+            header { justify-content: center; }
+            .system-status { display: none; }
+        }
+    </style>
 </head>
 <body
-  data-enable-live="{{ '1' if enable_live else '0' }}"
-  data-live-mode="{{ live_mode }}"
-  data-live-client-interval-ms="{{ live_client_interval_ms }}"
-  data-live-client-width="{{ live_client_width }}"
-  data-live-client-jpeg-quality="{{ live_client_jpeg_quality }}"
+    data-enable-live="{{ '1' if enable_live else '0' }}"
+    data-live-mode="{{ live_mode }}"
+    data-live-client-interval-ms="{{ live_client_interval_ms }}"
+    data-live-client-width="{{ live_client_width }}"
+    data-live-client-jpeg-quality="{{ live_client_jpeg_quality }}"
 >
 
-<div class="container">
-  <header class="header">
-    <div class="title">Fabric Defect Detection</div>
-    <div class="subtitle">Upload image/video or use live camera. Click Detect to see the boxed result.</div>
-  </header>
+    <header>
+        <div class="logo">
+            <i data-lucide="scan-eye"></i>
+            <span>FabricAI <span style="font-weight: 300; opacity: 0.6;">Pro</span></span>
+        </div>
 
-  <section class="card">
-    <div class="tabs" role="tablist" aria-label="Input mode">
-      <button id="modeImage" type="button" class="tab" onclick="setMode('image')">Image</button>
-      <button id="modeVideo" type="button" class="tab" onclick="setMode('video')">Video</button>
-      <button id="modeLive" type="button" class="tab" onclick="setMode('live')">Live Cam</button>
+        <nav class="mode-selector">
+            <button class="mode-btn active" onclick="switchMode('image')">
+                <i data-lucide="image"></i> Image
+            </button>
+            <button class="mode-btn" onclick="switchMode('video')">
+                <i data-lucide="film"></i> Video
+            </button>
+            <button id="live-mode-btn" class="mode-btn" onclick="switchMode('live')">
+                <i data-lucide="camera"></i> Live
+            </button>
+        </nav>
+
+        <div class="system-status">
+            <div class="status-pill">
+                <div class="status-dot" id="api-dot"></div>
+                <span id="api-status-text">API: Checking…</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- ============ IMAGE VIEW ============ -->
+        <section id="image-view" class="view-container active">
+            <div class="glass-card">
+                <div id="image-upload-zone" class="upload-zone">
+                    <div style="background: rgba(34, 211, 238, 0.1); padding: 1.5rem; border-radius: 50%;">
+                        <i data-lucide="upload-cloud" color="var(--accent-cyan)" size="48"></i>
+                    </div>
+                    <div>
+                        <h2 style="margin-bottom: 0.5rem;">Upload Fabric Sample</h2>
+                        <p style="color: var(--text-secondary);">Drag and drop image or click to browse (JPG, PNG)</p>
+                    </div>
+                    <input type="file" id="image-input" hidden accept="image/*">
+                </div>
+
+                <div id="image-preview-container" class="preview-container">
+                    <img id="image-preview" class="preview-image" src="" alt="Sample Preview">
+                </div>
+            </div>
+
+            <aside class="sidebar">
+                <div class="glass-card">
+                    <h3>Analysis Results</h3>
+                    <div class="stat-group">
+                        <div class="stat-item">
+                            <div class="stat-label">Status</div>
+                            <div id="img-status-val" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Confidence</div>
+                            <div id="img-conf-val" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Models Used</div>
+                            <div id="img-models-val" class="stat-value">&mdash;</div>
+                        </div>
+                    </div>
+                    <button id="analyze-img-btn" class="btn-primary" disabled onclick="analyzeImage()">
+                        <span class="btn-text">Analyze Sample</span>
+                        <div class="loader" id="img-loader"></div>
+                    </button>
+                    <button class="btn-reset" onclick="resetImage()">Upload New</button>
+                </div>
+            </aside>
+        </section>
+
+        <!-- ============ VIDEO VIEW ============ -->
+        <section id="video-view" class="view-container">
+            <div class="glass-card">
+                <div id="video-upload-zone" class="upload-zone">
+                    <div style="background: rgba(34, 211, 238, 0.1); padding: 1.5rem; border-radius: 50%;">
+                        <i data-lucide="film" color="var(--accent-cyan)" size="48"></i>
+                    </div>
+                    <div>
+                        <h2 style="margin-bottom: 0.5rem;">Process Production Video</h2>
+                        <p style="color: var(--text-secondary);">Upload MP4/AVI recording from inspection lines</p>
+                    </div>
+                    <input type="file" id="video-input" hidden accept="video/*">
+                </div>
+
+                <div id="video-player-container" class="preview-container" style="display: none;">
+                    <div class="video-wrapper">
+                        <video id="main-video" controls></video>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="sidebar">
+                <div class="glass-card">
+                    <h3>Batch Summary</h3>
+                    <div class="stat-group">
+                        <div class="stat-item">
+                            <div class="stat-label">Status</div>
+                            <div id="vid-status-val" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Confidence</div>
+                            <div id="vid-conf-val" class="stat-value">&mdash;</div>
+                        </div>
+                    </div>
+                    <button id="analyze-vid-btn" class="btn-primary" disabled onclick="analyzeVideo()">
+                        <span class="btn-text">Analyze Footage</span>
+                        <div class="loader" id="vid-loader"></div>
+                    </button>
+                    <button class="btn-reset" onclick="resetVideo()">Upload New</button>
+                </div>
+            </aside>
+        </section>
+
+        <!-- ============ LIVE VIEW ============ -->
+        <section id="live-view" class="view-container">
+            <div class="glass-card">
+                <div class="camera-feed">
+                    <video id="live-video" autoplay playsinline muted></video>
+                    <img id="live-result" style="display:none;" alt="Live result">
+
+                    <div class="live-overlay">
+                        <div id="live-indicator" style="width: 10px; height: 10px; border-radius: 50%; background: #666;"></div>
+                        <span id="live-status-text" style="font-weight: 600; font-size: 0.875rem;">CAMERA IDLE</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                    <button id="start-live-btn" class="btn-primary" onclick="toggleLive(true)" style="margin-top: 0;">Start Monitoring</button>
+                    <button id="stop-live-btn" class="btn-primary" onclick="toggleLive(false)" style="margin-top: 0; background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; display: none;">Stop</button>
+                </div>
+            </div>
+
+            <aside class="sidebar">
+                <div class="glass-card">
+                    <h3>Live Metrics</h3>
+                    <div class="stat-group">
+                        <div class="stat-item">
+                            <div class="stat-label">Status</div>
+                            <div id="live-defect-status" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Confidence</div>
+                            <div id="live-conf-val" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Session Defects</div>
+                            <div id="live-session-defects" class="stat-value">0</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 2rem; padding: 1rem; background: rgba(34, 211, 238, 0.05); border-radius: 12px; border: 1px dashed var(--accent-cyan); font-size: 0.8rem; color: var(--text-secondary);">
+                        <i data-lucide="info" size="14" style="vertical-align: middle; margin-right: 4px;"></i>
+                        All 3 models run on every frame
+                    </div>
+                </div>
+            </aside>
+        </section>
+    </main>
+
+    <div id="toast">
+        <i id="toast-icon" data-lucide="info"></i>
+        <span id="toast-message">Message here...</span>
     </div>
 
-    <div id="fileControls" class="controls">
-      <label class="file">
-        <span class="fileLabel">Choose file</span>
-        <input type="file" id="file" accept="image/*" />
-      </label>
-      <button id="detectBtn" type="button" class="btn btnPrimary" onclick="detect()">Detect</button>
-    </div>
+<script>
+// ─── Initialize Lucide Icons ────────────────────────────────────────────
+lucide.createIcons();
 
-    <div id="liveControls" class="controls" style="display:none">
-      <button id="liveDetectBtn" type="button" class="btn btnPrimary" onclick="detect()">Detect</button>
-      <button id="stopLiveBtn" type="button" class="btn" onclick="stopLive()" disabled>Stop</button>
-      <div id="liveAlert" class="liveAlert" aria-live="polite">
-        <span id="liveDot" class="liveDot" aria-hidden="true"></span>
-        <span id="liveAlertText">No defect</span>
-      </div>
-    </div>
+// ─── Config from server (Jinja) ─────────────────────────────────────────
+let enableLive = true;
+let liveMode = 'client';
+let liveClientIntervalMs = 700;
+let liveClientWidth = 480;
+let liveClientJpegQuality = 0.75;
 
-    <div id="status" class="status" aria-live="polite"></div>
+// ─── State ──────────────────────────────────────────────────────────────
+let currentMode = 'image';
+let isLiveActive = false;
+let liveStream = null;
+let liveFrameTimerId = null;
+let liveInFlight = false;
+let liveCanvas = null;
+let lastLiveObjectUrl = null;
+let livePollId = null;
+let liveDefectCount = 0;
+let selectedImageFile = null;
+let selectedVideoFile = null;
+let lastBeepAt = 0;
+let audioCtx = null;
 
-    <div class="output">
-      <video id="camIn" autoplay playsinline muted style="display:none"></video>
-      <img id="liveOut" style="display:none" />
-      <img id="imgOut" style="display:none" />
-      <video id="vidOut" controls style="display:none"></video>
-    </div>
-  </section>
+// ─── Helpers ────────────────────────────────────────────────────────────
+function showToast(msg, icon) {
+    const t = document.getElementById('toast');
+    document.getElementById('toast-message').innerText = msg;
+    document.getElementById('toast-icon').setAttribute('data-lucide', icon || 'info');
+    lucide.createIcons();
+    t.classList.add('visible');
+    setTimeout(() => t.classList.remove('visible'), 3500);
+}
 
-  <footer class="footer">Tip: Use smaller videos for faster processing.</footer>
-</div>
+function setLoading(prefix, isLoading) {
+    const btn = document.getElementById('analyze-' + prefix + '-btn');
+    const loader = document.getElementById(prefix + '-loader');
+    if (!btn) return;
+    const text = btn.querySelector('.btn-text');
+    btn.disabled = isLoading;
+    if (loader) loader.style.display = isLoading ? 'block' : 'none';
+    if (text)   text.style.display  = isLoading ? 'none'  : 'block';
+}
 
-<script src="/static/script.js?v=13"></script>
+// ─── Navigation ─────────────────────────────────────────────────────────
+function switchMode(mode) {
+    if (isLiveActive && mode !== 'live') {
+        showToast("Stop live detection before switching modes.", "alert-triangle");
+        return;
+    }
+    document.querySelectorAll('.mode-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.view-container').forEach(function(v) { v.classList.remove('active'); });
+
+    var idx = ['image', 'video', 'live'].indexOf(mode);
+    document.querySelector('.mode-btn:nth-child(' + (idx + 1) + ')').classList.add('active');
+    document.getElementById(mode + '-view').classList.add('active');
+    currentMode = mode;
+}
+
+// ─── IMAGE MODE ─────────────────────────────────────────────────────────
+var imgInput       = document.getElementById('image-input');
+var imgZone        = document.getElementById('image-upload-zone');
+var imgPreview     = document.getElementById('image-preview');
+var imgPreviewCont = document.getElementById('image-preview-container');
+var analyzeImgBtn  = document.getElementById('analyze-img-btn');
+
+imgZone.onclick = function() { imgInput.click(); };
+
+imgZone.addEventListener('dragover', function(e) { e.preventDefault(); imgZone.classList.add('drag-over'); });
+imgZone.addEventListener('dragleave', function() { imgZone.classList.remove('drag-over'); });
+imgZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    imgZone.classList.remove('drag-over');
+    var f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) { selectedImageFile = f; showImagePreview(f); }
+});
+
+imgInput.onchange = function(e) {
+    var f = e.target.files[0];
+    if (f) { selectedImageFile = f; showImagePreview(f); }
+};
+
+function showImagePreview(file) {
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        imgPreview.src = ev.target.result;
+        imgZone.style.display = 'none';
+        imgPreviewCont.style.display = 'block';
+        analyzeImgBtn.disabled = false;
+        resetImageStats();
+    };
+    reader.readAsDataURL(file);
+}
+
+function resetImageStats() {
+    document.getElementById('img-status-val').innerHTML = '&mdash;';
+    document.getElementById('img-conf-val').innerText   = '\u2014';
+    document.getElementById('img-models-val').innerText  = '\u2014';
+}
+
+function resetImage() {
+    imgZone.style.display = 'flex';
+    imgPreviewCont.style.display = 'none';
+    imgPreview.src = '';
+    imgInput.value = '';
+    selectedImageFile = null;
+    analyzeImgBtn.disabled = true;
+    resetImageStats();
+}
+
+async function analyzeImage() {
+    if (!selectedImageFile) { showToast("Select an image first", "alert-triangle"); return; }
+    setLoading('img', true);
+
+    try {
+        var formData = new FormData();
+        formData.append('file', selectedImageFile);
+
+        var res = await fetch('/upload-image', { method: 'POST', body: formData });
+
+        if (!res.ok) {
+            var errData = {};
+            try { errData = await res.json(); } catch(e) {}
+            throw new Error(errData.message || errData.error || 'Request failed (' + res.status + ')');
+        }
+
+        var defect = res.headers.get('X-Defect-Detected') === '1';
+        var score  = parseFloat(res.headers.get('X-Heatmap-Max') || '0');
+
+        var blob = await res.blob();
+        var url  = URL.createObjectURL(blob);
+        imgPreview.src = url;
+
+        document.getElementById('img-status-val').innerHTML = defect
+            ? '<span class="badge badge-defect">Defective</span>'
+            : '<span class="badge badge-clean">Clean</span>';
+        document.getElementById('img-conf-val').innerText = (score * 100).toFixed(1) + '%';
+        document.getElementById('img-models-val').innerText = '3 (best + best_old + yolo11n)';
+
+        showToast(defect ? "Defects detected!" : "No defects found", defect ? "alert-triangle" : "check-circle");
+
+    } catch (err) {
+        showToast("Analysis Failed: " + err.message, "x-circle");
+    } finally {
+        setLoading('img', false);
+    }
+}
+
+// ─── VIDEO MODE ─────────────────────────────────────────────────────────
+var vidInput       = document.getElementById('video-input');
+var vidZone        = document.getElementById('video-upload-zone');
+var vidPlayer      = document.getElementById('main-video');
+var vidPlayerCont  = document.getElementById('video-player-container');
+var analyzeVidBtn  = document.getElementById('analyze-vid-btn');
+
+vidZone.onclick = function() { vidInput.click(); };
+
+vidZone.addEventListener('dragover', function(e) { e.preventDefault(); vidZone.classList.add('drag-over'); });
+vidZone.addEventListener('dragleave', function() { vidZone.classList.remove('drag-over'); });
+vidZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    vidZone.classList.remove('drag-over');
+    var f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('video/')) { selectedVideoFile = f; showVideoPreview(f); }
+});
+
+vidInput.onchange = function(e) {
+    var f = e.target.files[0];
+    if (f) { selectedVideoFile = f; showVideoPreview(f); }
+};
+
+function showVideoPreview(file) {
+    vidPlayer.src = URL.createObjectURL(file);
+    vidZone.style.display = 'none';
+    vidPlayerCont.style.display = 'block';
+    analyzeVidBtn.disabled = false;
+    resetVideoStats();
+}
+
+function resetVideoStats() {
+    document.getElementById('vid-status-val').innerHTML = '&mdash;';
+    document.getElementById('vid-conf-val').innerText   = '\u2014';
+}
+
+function resetVideo() {
+    vidZone.style.display = 'flex';
+    vidPlayerCont.style.display = 'none';
+    vidPlayer.src = '';
+    vidInput.value = '';
+    selectedVideoFile = null;
+    analyzeVidBtn.disabled = true;
+    resetVideoStats();
+}
+
+async function analyzeVideo() {
+    if (!selectedVideoFile) { showToast("Select a video first", "alert-triangle"); return; }
+    setLoading('vid', true);
+
+    try {
+        var formData = new FormData();
+        formData.append('file', selectedVideoFile);
+
+        var res = await fetch('/upload-video', { method: 'POST', body: formData });
+
+        if (!res.ok) {
+            var errData = {};
+            try { errData = await res.json(); } catch(e) {}
+            throw new Error(errData.message || errData.error || 'Request failed (' + res.status + ')');
+        }
+
+        var defect = res.headers.get('X-Defect-Detected') === '1';
+        var score  = parseFloat(res.headers.get('X-Heatmap-Max') || '0');
+
+        var blob = await res.blob();
+        var url  = URL.createObjectURL(blob);
+        vidPlayer.src = url;
+        vidPlayer.load();
+
+        document.getElementById('vid-status-val').innerHTML = defect
+            ? '<span class="badge badge-defect">Defective</span>'
+            : '<span class="badge badge-clean">Clean</span>';
+        document.getElementById('vid-conf-val').innerText = (score * 100).toFixed(1) + '%';
+
+        showToast("Video processed", defect ? "alert-triangle" : "check-circle");
+
+    } catch (err) {
+        showToast("Analysis Failed: " + err.message, "x-circle");
+    } finally {
+        setLoading('vid', false);
+    }
+}
+
+// ─── LIVE MODE ──────────────────────────────────────────────────────────
+var liveVideo      = document.getElementById('live-video');
+var liveResult     = document.getElementById('live-result');
+var liveStatusText = document.getElementById('live-status-text');
+var liveIndicator  = document.getElementById('live-indicator');
+var startLiveBtn   = document.getElementById('start-live-btn');
+var stopLiveBtn    = document.getElementById('stop-live-btn');
+
+async function toggleLive(start) {
+    if (start) {
+        if (liveMode === 'client') { await startClientLive(); }
+        else { startServerLive(); }
+    } else {
+        stopLive();
+    }
+}
+
+async function startClientLive() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast("Camera not supported on this browser", "x-circle");
+        return;
+    }
+
+    try {
+        liveStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        liveVideo.srcObject = liveStream;
+        await liveVideo.play();
+    } catch (err) {
+        showToast("Camera access denied: " + err.message, "x-circle");
+        return;
+    }
+
+    isLiveActive = true;
+    liveDefectCount = 0;
+    document.getElementById('live-session-defects').innerText = '0';
+    startLiveBtn.style.display = 'none';
+    stopLiveBtn.style.display = 'block';
+    liveStatusText.innerText = "MONITORING ACTIVE";
+    liveIndicator.style.background = 'var(--status-clean)';
+    liveIndicator.style.boxShadow = '0 0 10px var(--status-clean)';
+    liveResult.style.display = 'block';
+
+    if (!liveCanvas) liveCanvas = document.createElement('canvas');
+    showToast("Live monitoring started", "camera");
+
+    liveFrameTimerId = setInterval(async function() {
+        if (!isLiveActive || liveInFlight) return;
+        if (!liveVideo.videoWidth || !liveVideo.videoHeight) return;
+
+        liveInFlight = true;
+        try {
+            var targetW = liveClientWidth;
+            var scale = targetW / liveVideo.videoWidth;
+            var w = Math.max(320, Math.round(liveVideo.videoWidth * Math.min(1, scale)));
+            var h = Math.max(240, Math.round(liveVideo.videoHeight * Math.min(1, scale)));
+
+            liveCanvas.width = w;
+            liveCanvas.height = h;
+            var ctx = liveCanvas.getContext('2d');
+            ctx.drawImage(liveVideo, 0, 0, w, h);
+
+            var blob = await new Promise(function(resolve) { liveCanvas.toBlob(resolve, 'image/jpeg', liveClientJpegQuality); });
+            if (!blob) return;
+
+            var formData = new FormData();
+            formData.append('file', blob, 'frame.jpg');
+
+            var res = await fetch('/upload-image?t=' + Date.now(), { method: 'POST', body: formData, cache: 'no-store' });
+            if (!res.ok) throw new Error('Request failed (' + res.status + ')');
+
+            var defect = res.headers.get('X-Defect-Detected') === '1';
+            var score  = parseFloat(res.headers.get('X-Heatmap-Max') || '0');
+
+            var outBlob = await res.blob();
+            var objectUrl = URL.createObjectURL(outBlob);
+            liveResult.src = objectUrl;
+            if (lastLiveObjectUrl) { try { URL.revokeObjectURL(lastLiveObjectUrl); } catch(e) {} }
+            lastLiveObjectUrl = objectUrl;
+
+            if (defect) {
+                liveDefectCount++;
+                document.getElementById('live-session-defects').innerText = liveDefectCount;
+                liveStatusText.innerText = "DEFECT DETECTED";
+                liveStatusText.style.color = "var(--status-defect)";
+                liveIndicator.style.background = "var(--status-defect)";
+                liveIndicator.style.boxShadow = '0 0 10px var(--status-defect)';
+                document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-defect">Defective</span>';
+                playDangerSound();
+            } else {
+                liveStatusText.innerText = "SURFACE CLEAN";
+                liveStatusText.style.color = "var(--status-clean)";
+                liveIndicator.style.background = "var(--status-clean)";
+                liveIndicator.style.boxShadow = '0 0 10px var(--status-clean)';
+                document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-clean">Clean</span>';
+            }
+            document.getElementById('live-conf-val').innerText = (score * 100).toFixed(1) + '%';
+
+        } catch (e) {
+            console.error('Live frame error:', e);
+        } finally {
+            liveInFlight = false;
+        }
+    }, liveClientIntervalMs);
+}
+
+function startServerLive() {
+    isLiveActive = true;
+    liveDefectCount = 0;
+    document.getElementById('live-session-defects').innerText = '0';
+    startLiveBtn.style.display = 'none';
+    stopLiveBtn.style.display = 'block';
+    liveStatusText.innerText = "MONITORING ACTIVE";
+    liveIndicator.style.background = 'var(--status-clean)';
+    liveResult.style.display = 'block';
+    liveResult.src = '/live?t=' + Date.now();
+
+    livePollId = setInterval(async function() {
+        try {
+            var res = await fetch('/live-status?t=' + Date.now(), { cache: 'no-store' });
+            if (!res.ok) return;
+            var data = await res.json();
+            var defect = Boolean(data.defect);
+            var score  = typeof data.score === 'number' ? data.score : 0;
+
+            if (defect) {
+                liveDefectCount++;
+                document.getElementById('live-session-defects').innerText = liveDefectCount;
+                liveStatusText.innerText = "DEFECT DETECTED";
+                liveStatusText.style.color = "var(--status-defect)";
+                liveIndicator.style.background = "var(--status-defect)";
+                document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-defect">Defective</span>';
+                playDangerSound();
+            } else {
+                liveStatusText.innerText = "SURFACE CLEAN";
+                liveStatusText.style.color = "var(--status-clean)";
+                liveIndicator.style.background = "var(--status-clean)";
+                document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-clean">Clean</span>';
+            }
+            document.getElementById('live-conf-val').innerText = (score * 100).toFixed(1) + '%';
+        } catch(e) {}
+    }, 500);
+
+    showToast("Live monitoring started (server camera)", "camera");
+}
+
+function stopLive() {
+    if (liveFrameTimerId) { clearInterval(liveFrameTimerId); liveFrameTimerId = null; }
+    if (livePollId) { clearInterval(livePollId); livePollId = null; }
+
+    if (liveStream) {
+        liveStream.getTracks().forEach(function(t) { t.stop(); });
+        liveStream = null;
+    }
+
+    liveVideo.srcObject = null;
+    liveResult.style.display = 'none';
+    liveResult.src = '';
+    if (lastLiveObjectUrl) { try { URL.revokeObjectURL(lastLiveObjectUrl); } catch(e) {} lastLiveObjectUrl = null; }
+
+    isLiveActive = false;
+    liveInFlight = false;
+    startLiveBtn.style.display = 'block';
+    stopLiveBtn.style.display = 'none';
+    liveStatusText.innerText = "CAMERA IDLE";
+    liveStatusText.style.color = "";
+    liveIndicator.style.background = '#666';
+    liveIndicator.style.boxShadow = 'none';
+
+    showToast("Live monitoring stopped", "camera-off");
+}
+
+// ─── Danger Sound ───────────────────────────────────────────────────────
+function playDangerSound() {
+    if (!audioCtx) {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtx = new Ctx();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(function() {});
+
+    var now = Date.now();
+    if (now - lastBeepAt < 2500) return;
+    lastBeepAt = now;
+
+    var start = audioCtx.currentTime;
+    var duration = 0.9;
+    var osc  = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = 'triangle';
+
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+    var lo = 520, hi = 980, steps = 6;
+    for (var i = 0; i < steps; i++) {
+        var t0 = start + (i * duration) / steps;
+        var t1 = start + ((i + 1) * duration) / steps;
+        var up = i % 2 === 0;
+        osc.frequency.setValueAtTime(up ? lo : hi, t0);
+        osc.frequency.linearRampToValueAtTime(up ? hi : lo, t1);
+    }
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(start);
+    osc.stop(start + duration + 0.02);
+}
+
+// ─── API Health Check ───────────────────────────────────────────────────
+async function checkApiHealth() {
+    var dot  = document.getElementById('api-dot');
+    var text = document.getElementById('api-status-text');
+    try {
+        var res = await fetch('/live-status?t=' + Date.now(), { cache: 'no-store' });
+        if (res.ok) {
+            dot.style.background = 'var(--status-clean)';
+            dot.style.boxShadow  = '0 0 8px var(--status-clean)';
+            text.innerText = 'API: Connected';
+        } else { throw new Error(); }
+    } catch(e) {
+        dot.style.background = 'var(--status-defect)';
+        dot.style.boxShadow  = '0 0 8px var(--status-defect)';
+        text.innerText = 'API: Offline';
+    }
+}
+
+// ─── Init ───────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', function() {
+    var d = document.body.dataset;
+    enableLive = d.enableLive !== '0';
+    liveMode   = d.liveMode === 'server' ? 'server' : 'client';
+
+    if (d.liveClientIntervalMs)  liveClientIntervalMs  = Math.max(250, parseInt(d.liveClientIntervalMs, 10) || 700);
+    if (d.liveClientWidth)       liveClientWidth        = Math.max(256, parseInt(d.liveClientWidth, 10) || 480);
+    if (d.liveClientJpegQuality) {
+        var q = parseFloat(d.liveClientJpegQuality);
+        if (!isNaN(q)) liveClientJpegQuality = Math.min(0.95, Math.max(0.35, q));
+    }
+
+    var liveTab = document.getElementById('live-mode-btn');
+    if (liveTab && !enableLive) liveTab.style.display = 'none';
+
+    checkApiHealth();
+    setInterval(checkApiHealth, 30000);
+});
+</script>
 </body>
 </html>

@@ -288,7 +288,7 @@
         <div class="system-status">
             <div class="status-pill">
                 <div class="status-dot" id="api-dot"></div>
-                <span id="api-status-text">API: Checking…</span>
+                <span id="api-status-text">MODEL: Checking…</span>
             </div>
         </div>
     </header>
@@ -884,12 +884,12 @@ async function checkApiHealth() {
         if (res.ok) {
             dot.style.background = 'var(--status-clean)';
             dot.style.boxShadow  = '0 0 8px var(--status-clean)';
-            text.innerText = 'API: Connected';
+            text.innerText = 'MODEL: Connected';
         } else { throw new Error(); }
     } catch(e) {
         dot.style.background = 'var(--status-defect)';
         dot.style.boxShadow  = '0 0 8px var(--status-defect)';
-        text.innerText = 'API: Offline';
+        text.innerText = 'MODEL: Offline';
     }
 }
 

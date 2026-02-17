@@ -363,8 +363,12 @@ def _predict_boxes_yolov8(model, frame: np.ndarray, conf_thres: float, imgsz: in
     return out
 
 
-def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float]:
-    """Run all 3 models and draw the union of detections."""
+def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarray, bool, float, dict]:
+    """Run all 3 models and draw the union of detections.
+
+    Returns (annotated_image, any_defect, max_conf, model_counts).
+    model_counts is a dict like {"best": 3, "best_old": 0, "yolo11n": 1}.
+    """
     imgsz = int(os.environ.get("MODEL_IMGSZ", "640"))
     device = os.environ.get("MODEL_DEVICE")  # e.g. 'cpu' or '0'
 
@@ -373,6 +377,7 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
 
     any_defect = False
     max_conf = 0.0
+    model_counts = {}
 
     with _predict_lock:
         for idx, entry in enumerate(models):
@@ -391,26 +396,14 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
                 app.logger.error("Model '%s' inference failed: %s", mname, e)
                 dets = []
 
+            model_counts[mname] = len(dets)
+
             for x1, y1, x2, y2, c in dets:
                 any_defect = True
                 max_conf = max(max_conf, float(c))
                 _draw_box(boxed, (x1, y1, x2, y2), f"defect {c:.2f}")
 
-            # Always show model name so user can confirm all models ran.
-            # Green + count when detections found; gray when none.
-            if dets:
-                label = f"{mname}: {len(dets)}"
-                color = (0, 0, 255)   # red = defects found
-            else:
-                label = f"{mname}: 0"
-                color = (128, 128, 128)  # gray = ran but no detections
-            cv2.putText(
-                boxed, label,
-                (10, 24 + 22 * idx),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2,
-            )
-
-    return boxed, any_defect, max_conf
+    return boxed, any_defect, max_conf, model_counts
 
 
 @app.route("/")
@@ -460,21 +453,23 @@ def upload_image():
 
     conf_thres = float(os.environ.get("CONF_THRES", "0.1"))
     try:
-        boxed, defect, score = predict_and_annotate(img, conf_thres)
+        boxed, defect, score, model_counts = predict_and_annotate(img, conf_thres)
     except Exception as e:
         app.logger.exception("Inference failed for /upload-image")
         msg = (str(e) or "").strip()
         if len(msg) > 600:
-            msg = msg[:600] + "…"
+            msg = msg[:600] + "\u2026"
         return {"error": "Inference failed", "type": type(e).__name__, "message": msg}, 500
 
     ok, enc = cv2.imencode(".jpg", boxed)
     if not ok:
         return {"error": "Encode failed"}, 500
 
+    import json as _json
     resp = send_file(io.BytesIO(enc.tobytes()), mimetype="image/jpeg")
     resp.headers["X-Defect-Detected"] = "1" if defect else "0"
     resp.headers["X-Heatmap-Max"] = f"{score:.6f}"
+    resp.headers["X-Model-Counts"] = _json.dumps(model_counts)
     return resp
 
 
@@ -514,7 +509,7 @@ def upload_video():
             break
 
         try:
-            boxed, defect, score = predict_and_annotate(frame, conf_thres)
+            boxed, defect, score, _mc = predict_and_annotate(frame, conf_thres)
         except Exception as e:
             cap.release()
             os.unlink(in_path)
@@ -677,7 +672,7 @@ def live():
             # Throttle inference to reduce lag (reuse last annotated frame in between).
             if frame_idx % infer_every == 0 or last_jpeg is None:
                 try:
-                    boxed, last_defect, last_score = predict_and_annotate(frame, conf_thres)
+                    boxed, last_defect, last_score, _mc = predict_and_annotate(frame, conf_thres)
 
                     _set_live_state(last_defect, last_score)
                 except Exception:

@@ -297,6 +297,39 @@
             min-width: 32px; text-align: center; user-select: none;
         }
 
+        .detection-log {
+            margin-top: 1.25rem;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-glass);
+            border-radius: 14px;
+            padding: 1rem 1.25rem;
+        }
+        .detection-log-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        .detection-log-header h4 {
+            font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .defect-counter {
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            background: rgba(239, 68, 68, 0.1); color: var(--status-defect);
+            padding: 0.25rem 0.75rem; border-radius: 999px;
+            font-size: 0.75rem; font-weight: 700;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .defect-counter.zero {
+            background: rgba(16, 185, 129, 0.1); color: var(--status-clean);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+        .detection-log-body {
+            display: flex; gap: 0.75rem; flex-wrap: wrap;
+        }
+        .detection-log-body .stat-item {
+            flex: 1; min-width: 120px;
+        }
+
         @media (max-width: 900px) {
             .view-container.active { grid-template-columns: 1fr; }
             header { justify-content: center; }
@@ -472,6 +505,30 @@
                         <button class="zoom-btn" onclick="changeZoom(1)">+</button>
                     </div>
                 </div>
+
+                <!-- Detection Log (visible when live is active) -->
+                <div id="detection-log" class="detection-log" style="display: none;">
+                    <div class="detection-log-header">
+                        <h4><i data-lucide="activity" size="16"></i> Detection Log</h4>
+                        <span id="defect-counter" class="defect-counter zero">0 defects</span>
+                    </div>
+                    <div class="detection-log-body">
+                        <div class="stat-item">
+                            <div class="stat-label">Last Result</div>
+                            <div id="log-last-result" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Confidence</div>
+                            <div id="log-confidence" class="stat-value">&mdash;</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Session Defects</div>
+                            <div id="live-session-defects" class="stat-value">0</div>
+                        </div>
+                    </div>
+                    <div id="model-counts-row" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+                    </div>
+                </div>
             </div>
 
             <aside class="sidebar">
@@ -485,10 +542,6 @@
                         <div class="stat-item">
                             <div class="stat-label">Confidence</div>
                             <div id="live-conf-val" class="stat-value">&mdash;</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Session Defects</div>
-                            <div id="live-session-defects" class="stat-value">0</div>
                         </div>
                     </div>
                     <div style="margin-top: 2rem; padding: 1rem; background: rgba(34, 211, 238, 0.05); border-radius: 12px; border: 1px dashed var(--accent-cyan); font-size: 0.8rem; color: var(--text-secondary);">
@@ -642,6 +695,11 @@ async function analyzeImage() {
         var defect = res.headers.get('X-Defect-Detected') === '1';
         var score  = parseFloat(res.headers.get('X-Heatmap-Max') || '0');
 
+        // Parse model counts from header
+        var modelCountsStr = res.headers.get('X-Model-Counts') || '{}';
+        var modelCounts = {};
+        try { modelCounts = JSON.parse(modelCountsStr); } catch(e) {}
+
         var blob = await res.blob();
         var url  = URL.createObjectURL(blob);
         imgPreview.src = url;
@@ -650,7 +708,9 @@ async function analyzeImage() {
             ? '<span class="badge badge-defect">Defective</span>'
             : '<span class="badge badge-clean">Clean</span>';
         document.getElementById('img-conf-val').innerText = (score * 100).toFixed(1) + '%';
-        document.getElementById('img-models-val').innerText = '3 (best + best_old + yolo11n)';
+        var mcParts = [];
+        for (var mk in modelCounts) { mcParts.push(mk + ': ' + modelCounts[mk]); }
+        document.getElementById('img-models-val').innerText = mcParts.length ? mcParts.join(' | ') : '3 models';
 
         showToast(defect ? "Defects detected!" : "No defects found", defect ? "alert-triangle" : "check-circle");
 
@@ -789,10 +849,13 @@ async function startClientLive() {
 
     if (!liveCanvas) liveCanvas = document.createElement('canvas');
 
-    // Show flash button if torch is supported
+    // Always show flash & zoom when live starts
+    document.getElementById('flash-btn').style.display = 'flex';
     checkFlashSupport();
-    // Show zoom controls
     initZoom();
+    // Show detection log
+    document.getElementById('detection-log').style.display = 'block';
+    lucide.createIcons();
 
     showToast("Live monitoring started", "camera");
 
@@ -823,6 +886,9 @@ async function startClientLive() {
 
             var defect = res.headers.get('X-Defect-Detected') === '1';
             var score  = parseFloat(res.headers.get('X-Heatmap-Max') || '0');
+            var mcStr  = res.headers.get('X-Model-Counts') || '{}';
+            var mc = {};
+            try { mc = JSON.parse(mcStr); } catch(e) {}
 
             var outBlob = await res.blob();
             var objectUrl = URL.createObjectURL(outBlob);
@@ -838,6 +904,7 @@ async function startClientLive() {
                 liveIndicator.style.background = "var(--status-defect)";
                 liveIndicator.style.boxShadow = '0 0 10px var(--status-defect)';
                 document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-defect">Defective</span>';
+                document.getElementById('log-last-result').innerHTML = '<span class="badge badge-defect">Defective</span>';
                 playDangerSound();
             } else {
                 liveStatusText.innerText = "SURFACE CLEAN";
@@ -845,8 +912,14 @@ async function startClientLive() {
                 liveIndicator.style.background = "var(--status-clean)";
                 liveIndicator.style.boxShadow = '0 0 10px var(--status-clean)';
                 document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-clean">Clean</span>';
+                document.getElementById('log-last-result').innerHTML = '<span class="badge badge-clean">Clean</span>';
             }
             document.getElementById('live-conf-val').innerText = (score * 100).toFixed(1) + '%';
+            document.getElementById('log-confidence').innerText = (score * 100).toFixed(1) + '%';
+            var dc = document.getElementById('defect-counter');
+            dc.innerText = liveDefectCount + ' defect' + (liveDefectCount !== 1 ? 's' : '');
+            if (liveDefectCount > 0) dc.classList.remove('zero'); else dc.classList.add('zero');
+            updateModelCounts(mc);
 
         } catch (e) {
             console.error('Live frame error:', e);
@@ -864,8 +937,15 @@ function startServerLive() {
     stopLiveBtn.style.display = 'block';
     liveStatusText.innerText = "MONITORING ACTIVE";
     liveIndicator.style.background = 'var(--status-clean)';
+    liveIndicator.style.boxShadow = '0 0 10px var(--status-clean)';
     liveResult.style.display = 'block';
     liveResult.src = '/live?t=' + Date.now();
+
+    // Show flash, zoom, detection log (same as client mode)
+    document.getElementById('flash-btn').style.display = 'flex';
+    initZoom();
+    document.getElementById('detection-log').style.display = 'block';
+    lucide.createIcons();
 
     livePollId = setInterval(async function() {
         try {
@@ -882,14 +962,20 @@ function startServerLive() {
                 liveStatusText.style.color = "var(--status-defect)";
                 liveIndicator.style.background = "var(--status-defect)";
                 document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-defect">Defective</span>';
+                document.getElementById('log-last-result').innerHTML = '<span class="badge badge-defect">Defective</span>';
                 playDangerSound();
             } else {
                 liveStatusText.innerText = "SURFACE CLEAN";
                 liveStatusText.style.color = "var(--status-clean)";
                 liveIndicator.style.background = "var(--status-clean)";
                 document.getElementById('live-defect-status').innerHTML = '<span class="badge badge-clean">Clean</span>';
+                document.getElementById('log-last-result').innerHTML = '<span class="badge badge-clean">Clean</span>';
             }
             document.getElementById('live-conf-val').innerText = (score * 100).toFixed(1) + '%';
+            document.getElementById('log-confidence').innerText = (score * 100).toFixed(1) + '%';
+            var dc2 = document.getElementById('defect-counter');
+            dc2.innerText = liveDefectCount + ' defect' + (liveDefectCount !== 1 ? 's' : '');
+            if (liveDefectCount > 0) dc2.classList.remove('zero'); else dc2.classList.add('zero');
         } catch(e) {}
     }, 500);
 
@@ -923,11 +1009,39 @@ function stopLive() {
     if (flashOn) toggleFlash();
     document.getElementById('flash-btn').style.display = 'none';
     resetZoom();
+    // Hide detection log & reset
+    document.getElementById('detection-log').style.display = 'none';
+    document.getElementById('log-last-result').innerHTML = '&mdash;';
+    document.getElementById('log-confidence').innerText = '\u2014';
+    var dc = document.getElementById('defect-counter');
+    dc.innerText = '0 defects'; dc.classList.add('zero');
 
     showToast("Live monitoring stopped", "camera-off");
 }
 
 // ─── Flash / Torch ──────────────────────────────────────────────────────
+function updateModelCounts(mc) {
+    var row = document.getElementById('model-counts-row');
+    if (!row) return;
+    row.innerHTML = '';
+    for (var name in mc) {
+        var count = mc[name];
+        var pill = document.createElement('span');
+        pill.style.cssText = 'padding:0.3rem 0.7rem; border-radius:8px; font-size:0.7rem; font-weight:600; border:1px solid;';
+        if (count > 0) {
+            pill.style.background = 'rgba(239,68,68,0.1)';
+            pill.style.color = 'var(--status-defect)';
+            pill.style.borderColor = 'rgba(239,68,68,0.3)';
+        } else {
+            pill.style.background = 'rgba(16,185,129,0.1)';
+            pill.style.color = 'var(--status-clean)';
+            pill.style.borderColor = 'rgba(16,185,129,0.3)';
+        }
+        pill.innerText = name + ': ' + count;
+        row.appendChild(pill);
+    }
+}
+
 async function checkFlashSupport() {
     if (!liveStream) return;
     try {

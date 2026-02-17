@@ -252,10 +252,53 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        .flash-btn {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--border-glass);
+            color: var(--text-secondary);
+            padding: 0.6rem 1.1rem;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex; align-items: center; gap: 0.5rem;
+            font-size: 0.8rem; font-weight: 500;
+            transition: var(--transition-smooth);
+        }
+        .flash-btn:hover { background: rgba(255,255,255,0.15); }
+        .flash-btn.active {
+            background: rgba(250, 204, 21, 0.15);
+            color: #facc15;
+            border-color: #facc15;
+        }
+
+        .live-controls-row {
+            display: flex; gap: 0.75rem; margin-top: 1.5rem;
+            flex-wrap: wrap; align-items: center;
+        }
+        .live-controls-row .btn-primary { flex: 1; min-width: 140px; margin-top: 0; }
+
         @media (max-width: 900px) {
             .view-container.active { grid-template-columns: 1fr; }
             header { justify-content: center; }
             .system-status { display: none; }
+            main { padding: 0 0.75rem; margin: 1rem auto; }
+            .glass-card { padding: 1rem; border-radius: 16px; }
+
+            /* Live view: bigger camera on mobile */
+            #live-view .camera-feed { aspect-ratio: 4/3; border-radius: 12px; }
+            #live-view .glass-card { padding: 0.75rem; }
+            .live-overlay { top: 0.75rem; right: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 8px; }
+            .live-overlay span { font-size: 0.75rem; }
+
+            /* Live sidebar: compact horizontal stats */
+            #live-view .sidebar .stat-group {
+                flex-direction: row; flex-wrap: wrap; gap: 0.5rem;
+            }
+            #live-view .sidebar .stat-item { flex: 1; min-width: 90px; padding: 0.75rem; }
+            #live-view .sidebar .stat-label { font-size: 0.65rem; }
+            #live-view .sidebar .stat-value { font-size: 1rem; }
+            #live-view .sidebar h3 { font-size: 1rem; margin-bottom: 0.75rem; }
+
+            .upload-zone { padding: 2.5rem 1rem; }
         }
     </style>
 </head>
@@ -395,9 +438,13 @@
                     </div>
                 </div>
 
-                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                    <button id="start-live-btn" class="btn-primary" onclick="toggleLive(true)" style="margin-top: 0;">Start Monitoring</button>
-                    <button id="stop-live-btn" class="btn-primary" onclick="toggleLive(false)" style="margin-top: 0; background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; display: none;">Stop</button>
+                <div class="live-controls-row">
+                    <button id="start-live-btn" class="btn-primary" onclick="toggleLive(true)">Start Monitoring</button>
+                    <button id="stop-live-btn" class="btn-primary" onclick="toggleLive(false)" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; display: none;">Stop</button>
+                    <button id="flash-btn" class="flash-btn" onclick="toggleFlash()" style="display: none;" title="Toggle flashlight">
+                        <i data-lucide="flashlight" size="16"></i>
+                        <span id="flash-label">Flash</span>
+                    </button>
                 </div>
             </div>
 
@@ -457,6 +504,7 @@ let selectedImageFile = null;
 let selectedVideoFile = null;
 let lastBeepAt = 0;
 let audioCtx = null;
+let flashOn = false;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 function showToast(msg, icon) {
@@ -709,6 +757,10 @@ async function startClientLive() {
     liveResult.style.display = 'block';
 
     if (!liveCanvas) liveCanvas = document.createElement('canvas');
+
+    // Show flash button if torch is supported
+    checkFlashSupport();
+
     showToast("Live monitoring started", "camera");
 
     liveFrameTimerId = setInterval(async function() {
@@ -834,7 +886,46 @@ function stopLive() {
     liveIndicator.style.background = '#666';
     liveIndicator.style.boxShadow = 'none';
 
+    // Turn off flash
+    if (flashOn) toggleFlash();
+    document.getElementById('flash-btn').style.display = 'none';
+
     showToast("Live monitoring stopped", "camera-off");
+}
+
+// ─── Flash / Torch ──────────────────────────────────────────────────────
+async function checkFlashSupport() {
+    if (!liveStream) return;
+    try {
+        var track = liveStream.getVideoTracks()[0];
+        if (!track) return;
+        var caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.torch) {
+            document.getElementById('flash-btn').style.display = 'flex';
+        }
+    } catch(e) {}
+}
+
+async function toggleFlash() {
+    if (!liveStream) return;
+    try {
+        var track = liveStream.getVideoTracks()[0];
+        if (!track) return;
+        flashOn = !flashOn;
+        await track.applyConstraints({ advanced: [{ torch: flashOn }] });
+        var btn = document.getElementById('flash-btn');
+        var label = document.getElementById('flash-label');
+        if (flashOn) {
+            btn.classList.add('active');
+            label.innerText = 'Flash On';
+        } else {
+            btn.classList.remove('active');
+            label.innerText = 'Flash';
+        }
+    } catch(e) {
+        showToast('Flash not available on this device', 'x-circle');
+        flashOn = false;
+    }
 }
 
 // ─── Danger Sound ───────────────────────────────────────────────────────

@@ -277,10 +277,19 @@ def get_models() -> list[dict]:
             loaded = []
             for spec in specs:
                 app.logger.info("Loading model '%s' from %s ...", spec["name"], spec["path"])
-                model, model_type = _load_one_model(spec["path"])
-                loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
-                app.logger.info("  -> '%s' loaded as %s", spec["name"], model_type)
+                try:
+                    model, model_type = _load_one_model(spec["path"])
+                    loaded.append({"name": spec["name"], "path": spec["path"], "model": model, "type": model_type})
+                    app.logger.info("  -> '%s' loaded as %s", spec["name"], model_type)
+                except Exception as e:
+                    app.logger.error("  !! FAILED to load '%s': %s", spec["name"], e)
 
+            if not loaded:
+                raise RuntimeError("All models failed to load")
+
+            app.logger.info("=== %d / %d models loaded: %s ===",
+                            len(loaded), len(specs),
+                            ", ".join(m["name"] for m in loaded))
             _models = loaded
         return _models
 
@@ -371,28 +380,35 @@ def predict_and_annotate(frame: np.ndarray, conf_thres: float) -> tuple[np.ndarr
             mtype = entry["type"]
             mname = entry["name"]
 
-            if mtype == "onnxrt":
-                dets = _predict_boxes_onnxrt(m, frame, conf_thres, imgsz, device)
-            elif mtype == "yolov5":
-                dets = _predict_boxes_yolov5(m, frame, conf_thres, imgsz, device)
-            else:
-                dets = _predict_boxes_yolov8(m, frame, conf_thres, imgsz, device)
+            try:
+                if mtype == "onnxrt":
+                    dets = _predict_boxes_onnxrt(m, frame, conf_thres, imgsz, device)
+                elif mtype == "yolov5":
+                    dets = _predict_boxes_yolov5(m, frame, conf_thres, imgsz, device)
+                else:
+                    dets = _predict_boxes_yolov8(m, frame, conf_thres, imgsz, device)
+            except Exception as e:
+                app.logger.error("Model '%s' inference failed: %s", mname, e)
+                dets = []
 
             for x1, y1, x2, y2, c in dets:
                 any_defect = True
                 max_conf = max(max_conf, float(c))
                 _draw_box(boxed, (x1, y1, x2, y2), f"defect {c:.2f}")
 
+            # Always show model name so user can confirm all models ran.
+            # Green + count when detections found; gray when none.
             if dets:
-                cv2.putText(
-                    boxed,
-                    f"{mname}: {len(dets)}",
-                    (10, 24 + 22 * idx),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 0, 255),
-                    2,
-                )
+                label = f"{mname}: {len(dets)}"
+                color = (0, 0, 255)   # red = defects found
+            else:
+                label = f"{mname}: 0"
+                color = (128, 128, 128)  # gray = ran but no detections
+            cv2.putText(
+                boxed, label,
+                (10, 24 + 22 * idx),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2,
+            )
 
     return boxed, any_defect, max_conf
 

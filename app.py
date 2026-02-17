@@ -132,9 +132,10 @@ def _predict_boxes_onnxrt(session: ort.InferenceSession, frame: np.ndarray,
         return []
 
     # --- normalise shape to (N, 4+nc) --------------------------------------
-    # YOLOv8/v11: [1, 4+nc, N]  →  transpose
+    # YOLOv8/v11: [1, 4+nc, N]  →  transpose   (shape[1] < shape[2])
     # YOLOv5:     [1, N, 5+nc]  →  already correct orientation
-    if output.shape[1] < output.shape[2]:
+    is_v8_layout = output.shape[1] < output.shape[2]
+    if is_v8_layout:
         preds = output[0].T                         # (N, 4+nc)
     else:
         preds = output[0]                           # (N, 5+nc) — YOLOv5
@@ -142,7 +143,9 @@ def _predict_boxes_onnxrt(session: ort.InferenceSession, frame: np.ndarray,
     num_cols = preds.shape[1]
 
     # YOLOv5 has an objectness column at index 4; YOLOv8+ does not.
-    if num_cols >= 6:                               # likely YOLOv5 (4+1+nc)
+    # We distinguish by the *original* tensor layout, not just column count,
+    # because a YOLOv8 model with many classes can also have num_cols >= 6.
+    if not is_v8_layout and num_cols >= 6:           # YOLOv5 (4+1+nc)
         obj = preds[:, 4]
         cls_scores = preds[:, 5:] * obj[:, None]
     else:                                           # YOLOv8/v11 (4+nc)

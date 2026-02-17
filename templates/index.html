@@ -276,6 +276,27 @@
         }
         .live-controls-row .btn-primary { flex: 1; min-width: 140px; margin-top: 0; }
 
+        .zoom-controls {
+            display: flex; align-items: center; gap: 0.35rem;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-glass);
+            border-radius: 10px; padding: 0.25rem;
+        }
+        .zoom-btn {
+            background: transparent; border: none;
+            color: var(--text-secondary); cursor: pointer;
+            width: 32px; height: 32px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            transition: var(--transition-smooth);
+            font-size: 1.1rem; font-weight: 600;
+        }
+        .zoom-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+        .zoom-btn:active { transform: scale(0.9); }
+        .zoom-level {
+            font-size: 0.7rem; font-weight: 600; color: var(--accent-cyan);
+            min-width: 32px; text-align: center; user-select: none;
+        }
+
         @media (max-width: 900px) {
             .view-container.active { grid-template-columns: 1fr; }
             header { justify-content: center; }
@@ -445,6 +466,11 @@
                         <i data-lucide="flashlight" size="16"></i>
                         <span id="flash-label">Flash</span>
                     </button>
+                    <div id="zoom-controls" class="zoom-controls" style="display: none;" title="Zoom">
+                        <button class="zoom-btn" onclick="changeZoom(-1)">−</button>
+                        <span id="zoom-level" class="zoom-level">1.0×</span>
+                        <button class="zoom-btn" onclick="changeZoom(1)">+</button>
+                    </div>
                 </div>
             </div>
 
@@ -505,6 +531,11 @@ let selectedVideoFile = null;
 let lastBeepAt = 0;
 let audioCtx = null;
 let flashOn = false;
+let currentZoom = 1;
+let zoomMin = 1;
+let zoomMax = 1;
+let zoomStep = 0.5;
+let useNativeZoom = false;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 function showToast(msg, icon) {
@@ -760,6 +791,8 @@ async function startClientLive() {
 
     // Show flash button if torch is supported
     checkFlashSupport();
+    // Show zoom controls
+    initZoom();
 
     showToast("Live monitoring started", "camera");
 
@@ -886,9 +919,10 @@ function stopLive() {
     liveIndicator.style.background = '#666';
     liveIndicator.style.boxShadow = 'none';
 
-    // Turn off flash
+    // Turn off flash & reset zoom
     if (flashOn) toggleFlash();
     document.getElementById('flash-btn').style.display = 'none';
+    resetZoom();
 
     showToast("Live monitoring stopped", "camera-off");
 }
@@ -926,6 +960,71 @@ async function toggleFlash() {
         showToast('Flash not available on this device', 'x-circle');
         flashOn = false;
     }
+}
+
+// ─── Zoom ───────────────────────────────────────────────────────────────
+function initZoom() {
+    currentZoom = 1;
+    useNativeZoom = false;
+    zoomMin = 1; zoomMax = 5; zoomStep = 0.5;
+    if (liveStream) {
+        try {
+            var track = liveStream.getVideoTracks()[0];
+            var caps = track && track.getCapabilities ? track.getCapabilities() : {};
+            if (caps.zoom) {
+                useNativeZoom = true;
+                zoomMin = caps.zoom.min || 1;
+                zoomMax = caps.zoom.max || 5;
+                zoomStep = caps.zoom.step || 0.5;
+                currentZoom = zoomMin;
+            }
+        } catch(e) {}
+    }
+    document.getElementById('zoom-level').innerText = currentZoom.toFixed(1) + '×';
+    document.getElementById('zoom-controls').style.display = 'flex';
+    // Reset CSS transform
+    liveVideo.style.transform = '';
+    liveResult.style.transform = '';
+}
+
+function resetZoom() {
+    currentZoom = 1;
+    document.getElementById('zoom-controls').style.display = 'none';
+    document.getElementById('zoom-level').innerText = '1.0×';
+    liveVideo.style.transform = '';
+    liveResult.style.transform = '';
+}
+
+async function changeZoom(dir) {
+    var newZoom = currentZoom + dir * zoomStep;
+    newZoom = Math.round(newZoom * 10) / 10;
+    if (newZoom < zoomMin) newZoom = zoomMin;
+    if (newZoom > zoomMax) newZoom = zoomMax;
+    if (newZoom === currentZoom) return;
+
+    if (useNativeZoom && liveStream) {
+        try {
+            var track = liveStream.getVideoTracks()[0];
+            await track.applyConstraints({ advanced: [{ zoom: newZoom }] });
+            currentZoom = newZoom;
+        } catch(e) {
+            // Fall back to CSS zoom
+            useNativeZoom = false;
+            zoomMin = 1; zoomMax = 5; zoomStep = 0.5;
+            currentZoom = newZoom;
+            applyCssZoom();
+        }
+    } else {
+        currentZoom = newZoom;
+        applyCssZoom();
+    }
+    document.getElementById('zoom-level').innerText = currentZoom.toFixed(1) + '×';
+}
+
+function applyCssZoom() {
+    var t = 'scale(' + currentZoom + ')';
+    liveVideo.style.transform = t;
+    liveResult.style.transform = t;
 }
 
 // ─── Danger Sound ───────────────────────────────────────────────────────

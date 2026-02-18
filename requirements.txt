@@ -1,16 +1,9 @@
 flask>=2.3,<4
-# Ultralytics pulls torch/torchvision as needed on most platforms
-ultralytics>=8.0.0
-torch>=2.1,<3
-torchvision>=0.16,<1
 numpy>=1.23
-# Required by torch.hub for YOLOv5 model loading
-setuptools>=70.0.0
-gitpython>=3.1
 # Server-friendly OpenCV (no GUI deps)
 opencv-python-headless>=4.8
 imageio-ffmpeg>=0.4
-# ONNX Runtime with support for IR version 10
+# ONNX Runtime — the only inference backend needed on Render (Linux)
 onnxruntime>=1.18.0
 # Production WSGI server (Linux)
 gunicorn>=21

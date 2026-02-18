@@ -1,9 +1,9 @@
 # Gunicorn configuration — auto-discovered when gunicorn runs from this directory.
 #
 # Render start command (set in Dashboard → Settings → Start Command):
-#   gunicorn app:app --bind 0.0.0.0:$PORT
+#   gunicorn app:app -c gunicorn.conf.py --bind 0.0.0.0:$PORT
 #
-# Do NOT add --workers / --threads / --timeout on the command line;
+# IMPORTANT: Do NOT add --workers / --threads / --timeout on the command line;
 # they override this file.  Use env vars instead if needed.
 
 import os

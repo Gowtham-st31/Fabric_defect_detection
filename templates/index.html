@@ -873,7 +873,17 @@ async function startClientLive() {
             liveCanvas.width = w;
             liveCanvas.height = h;
             var ctx = liveCanvas.getContext('2d');
-            ctx.drawImage(liveVideo, 0, 0, w, h);
+
+            // Digital zoom: crop center of source frame when zoom > 1 and not using native zoom
+            if (!useNativeZoom && currentZoom > 1) {
+                var srcW = liveVideo.videoWidth / currentZoom;
+                var srcH = liveVideo.videoHeight / currentZoom;
+                var srcX = (liveVideo.videoWidth - srcW) / 2;
+                var srcY = (liveVideo.videoHeight - srcH) / 2;
+                ctx.drawImage(liveVideo, srcX, srcY, srcW, srcH, 0, 0, w, h);
+            } else {
+                ctx.drawImage(liveVideo, 0, 0, w, h);
+            }
 
             var blob = await new Promise(function(resolve) { liveCanvas.toBlob(resolve, 'image/jpeg', liveClientJpegQuality); });
             if (!blob) return;
@@ -1055,12 +1065,44 @@ async function checkFlashSupport() {
 }
 
 async function toggleFlash() {
-    if (!liveStream) return;
+    if (!liveStream) {
+        showToast('Flash requires client camera mode', 'x-circle');
+        return;
+    }
+    var track = liveStream.getVideoTracks()[0];
+    if (!track) { showToast('No video track found', 'x-circle'); return; }
+
+    var wantOn = !flashOn;
+    var success = false;
+
+    // Try multiple constraint formats — different Android browsers accept different formats
     try {
-        var track = liveStream.getVideoTracks()[0];
-        if (!track) return;
-        flashOn = !flashOn;
-        await track.applyConstraints({ advanced: [{ torch: flashOn }] });
+        await track.applyConstraints({ torch: wantOn });
+        success = true;
+    } catch(e1) {
+        try {
+            await track.applyConstraints({ advanced: [{ torch: wantOn }] });
+            success = true;
+        } catch(e2) {
+            // Last resort: re-request camera with torch constraint
+            try {
+                var newStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { exact: 'environment' }, torch: wantOn },
+                    audio: false
+                });
+                // Replace the old stream
+                liveStream.getTracks().forEach(function(t) { t.stop(); });
+                liveStream = newStream;
+                liveVideo.srcObject = liveStream;
+                success = true;
+            } catch(e3) {
+                console.error('Flash attempts failed:', e1, e2, e3);
+            }
+        }
+    }
+
+    if (success) {
+        flashOn = wantOn;
         var btn = document.getElementById('flash-btn');
         var label = document.getElementById('flash-label');
         if (flashOn) {
@@ -1070,9 +1112,8 @@ async function toggleFlash() {
             btn.classList.remove('active');
             label.innerText = 'Flash';
         }
-    } catch(e) {
-        showToast('Flash not available on this device', 'x-circle');
-        flashOn = false;
+    } else {
+        showToast('Flash not supported by this camera', 'x-circle');
     }
 }
 
@@ -1096,9 +1137,8 @@ function initZoom() {
     }
     document.getElementById('zoom-level').innerText = currentZoom.toFixed(1) + '×';
     document.getElementById('zoom-controls').style.display = 'flex';
-    // Reset CSS transform
+    // Reset CSS transform on camera preview only (result shows server output)
     liveVideo.style.transform = '';
-    liveResult.style.transform = '';
 }
 
 function resetZoom() {
@@ -1106,7 +1146,6 @@ function resetZoom() {
     document.getElementById('zoom-controls').style.display = 'none';
     document.getElementById('zoom-level').innerText = '1.0×';
     liveVideo.style.transform = '';
-    liveResult.style.transform = '';
 }
 
 async function changeZoom(dir) {
@@ -1136,9 +1175,9 @@ async function changeZoom(dir) {
 }
 
 function applyCssZoom() {
-    var t = 'scale(' + currentZoom + ')';
-    liveVideo.style.transform = t;
-    liveResult.style.transform = t;
+    // Only scale the camera preview for visual feedback;
+    // the canvas capture already crops the zoomed area for the server.
+    liveVideo.style.transform = 'scale(' + currentZoom + ')';
 }
 
 // ─── Danger Sound ───────────────────────────────────────────────────────

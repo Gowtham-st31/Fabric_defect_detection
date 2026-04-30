@@ -45,8 +45,7 @@ def _default_model_specs() -> list[dict]:
     """
     prefer_onnx = os.environ.get("PREFER_ONNX", "1").strip().lower() not in {"0", "false", "no"}
 
-    # Render/Linux hosts often have tight memory; ONNX Runtime is much lighter than loading 3x PyTorch models.
-    if prefer_onnx and os.name != "nt":
+    if prefer_onnx:
         onnx_specs = [
             {"name": "best", "path": os.path.join(ROOT, "model", "best.onnx")},
             {"name": "best_old", "path": os.path.join(ROOT, "model", "best_old.onnx")},

@@ -4,21 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FabricAI | Industrial Defect Detection</title>
+    <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
     <style>
         :root {
-            --bg-deep: #020617;
-            --bg-surface: #0f172a;
-            --bg-glass: rgba(30, 41, 59, 0.7);
-            --accent-cyan: #22d3ee;
-            --accent-blue: #3b82f6;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
+            --bg-deep: #050505;
+            --bg-surface: #111111;
+            --bg-glass: rgba(15, 15, 15, 0.7);
+            --accent-cyan: #FFA500;
+            --accent-blue: #FF8C00;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
             --status-clean: #10b981;
             --status-defect: #ef4444;
-            --border-glass: rgba(255, 255, 255, 0.1);
-            --shadow-premium: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --border-glass: rgba(255, 165, 0, 0.2);
+            --shadow-premium: 0 25px 50px -12px rgba(255, 165, 0, 0.1);
             --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
@@ -38,7 +40,7 @@
             position: fixed;
             top: -10%; right: -10%;
             width: 40%; height: 40%;
-            background: radial-gradient(circle, rgba(34, 211, 238, 0.08) 0%, transparent 70%);
+            background: transparent;
             z-index: -1;
         }
 
@@ -354,6 +356,46 @@
 
             .upload-zone { padding: 2.5rem 1rem; }
         }
+
+        /* Cinematic Intro Styles */
+        .cinematic-intro {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(5, 5, 5, 0.5); backdrop-filter: blur(12px);
+            z-index: 9999; display: flex; align-items: center; justify-content: center;
+            transition: all 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .intro-hidden { opacity: 0; pointer-events: none; transform: scale(1.1); backdrop-filter: blur(0px); }
+        
+        .intro-content { text-align: center; }
+        .intro-title {
+            font-size: clamp(3rem, 6vw, 6rem); font-weight: 800; letter-spacing: 0.1em;
+            color: #ffffff; text-transform: uppercase;
+            animation: cinematicGlow 3s ease-in-out infinite alternate, cinematicExpand 2s ease-out forwards;
+            text-shadow: 0 0 20px rgba(255, 165, 0, 0.5);
+            margin-bottom: 0.5rem; line-height: 1.1;
+        }
+        .intro-line {
+            width: 0; height: 3px; background: linear-gradient(90deg, transparent, #FFA500, transparent);
+            margin: 0 auto 2.5rem auto; animation: lineExpand 1.5s 1s ease-out forwards;
+        }
+        .intro-btn {
+            background: transparent; border: 1px solid rgba(255, 165, 0, 0.5);
+            color: #FFA500; font-size: 1.1rem; letter-spacing: 0.2em; text-transform: uppercase;
+            padding: 1rem 3rem; cursor: pointer; transition: all 0.4s;
+            opacity: 0; transform: translateY(20px); animation: fadeUpBtn 1s 1.5s ease-out forwards;
+        }
+        .intro-btn:hover { background: rgba(255, 165, 0, 0.1); box-shadow: 0 0 20px rgba(255, 165, 0, 0.3); border-color: #FFA500; color: #fff; }
+
+        @keyframes cinematicExpand { 0% { letter-spacing: -0.1em; opacity: 0; filter: blur(10px); transform: scale(0.9); } 100% { letter-spacing: 0.1em; opacity: 1; filter: blur(0px); transform: scale(1); } }
+        @keyframes cinematicGlow { 0% { text-shadow: 0 0 10px rgba(255, 165, 0, 0.2); } 100% { text-shadow: 0 0 40px rgba(255, 165, 0, 0.8), 0 0 80px rgba(255, 140, 0, 0.6); } }
+        @keyframes lineExpand { to { width: 80%; } }
+        @keyframes fadeUpBtn { to { opacity: 1; transform: translateY(0); } }
+
+        #app-wrapper {
+            opacity: 0; transform: scale(0.95); transition: all 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+            flex: 1; display: flex; flex-direction: column; width: 100%; pointer-events: none;
+        }
+        .app-visible { opacity: 1 !important; transform: scale(1) !important; pointer-events: auto !important; }
     </style>
 </head>
 <body
@@ -363,7 +405,18 @@
     data-live-client-width="{{ live_client_width }}"
     data-live-client-jpeg-quality="{{ live_client_jpeg_quality }}"
 >
+    <!-- Three.js Background Canvas -->
+    <canvas id="bg-canvas" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -2; pointer-events: none;"></canvas>
 
+    <div id="cinematic-intro" class="cinematic-intro">
+        <div class="intro-content">
+            <h1 class="intro-title">Fabric Defect<br>Detection</h1>
+            <div class="intro-line"></div>
+            <button id="enter-btn" class="intro-btn">Click Here</button>
+        </div>
+    </div>
+
+    <div id="app-wrapper">
     <header>
         <div class="logo">
             <i data-lucide="scan-eye"></i>
@@ -557,6 +610,22 @@
         <i id="toast-icon" data-lucide="info"></i>
         <span id="toast-message">Message here...</span>
     </div>
+    </div> <!-- End of #app-wrapper -->
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const enterBtn = document.getElementById('enter-btn');
+        const introOverlay = document.getElementById('cinematic-intro');
+        const appWrapper = document.getElementById('app-wrapper');
+
+        if(enterBtn && introOverlay && appWrapper) {
+            enterBtn.addEventListener('click', () => {
+                introOverlay.classList.add('intro-hidden');
+                appWrapper.classList.add('app-visible');
+            });
+        }
+    });
+</script>
 
 <script>
 // ─── Initialize Lucide Icons ────────────────────────────────────────────
@@ -1256,5 +1325,73 @@ window.addEventListener('DOMContentLoaded', function() {
     setInterval(checkApiHealth, 30000);
 });
 </script>
+
+<script>
+// --- Three.js Aurora Background ---
+const canvas = document.getElementById('bg-canvas');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const geometry = new THREE.PlaneGeometry(20, 10, 64, 64);
+const material = new THREE.ShaderMaterial({
+    uniforms: {
+        uTime: { value: 0 },
+        uColor1: { value: new THREE.Color('#FF8C00') }, // Darker orange
+        uColor2: { value: new THREE.Color('#FFA500') }, // Lighter orange
+    },
+    vertexShader: `
+        uniform float uTime;
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            vec3 pos = position;
+            pos.z += sin(pos.x * 2.0 + uTime * 0.5) * 0.5;
+            pos.z += cos(pos.y * 1.5 + uTime * 0.8) * 0.5;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uColor1;
+        uniform vec3 uColor2;
+        varying vec2 vUv;
+        void main() {
+            float noise = sin(vUv.x * 10.0 + uTime) * cos(vUv.y * 10.0 + uTime);
+            vec3 color = mix(uColor1, uColor2, vUv.y + noise * 0.1);
+            float alpha = smoothstep(0.0, 0.5, vUv.y) * smoothstep(1.0, 0.5, vUv.y);
+            alpha *= smoothstep(0.0, 0.2, vUv.x) * smoothstep(1.0, 0.8, vUv.x);
+            gl_FragColor = vec4(color, alpha * 0.35);
+        }
+    `,
+    transparent: true,
+    wireframe: false,
+    side: THREE.DoubleSide
+});
+
+const plane = new THREE.Mesh(geometry, material);
+plane.rotation.x = -Math.PI * 0.3;
+plane.position.y = -2;
+plane.position.z = -5;
+scene.add(plane);
+
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+    material.uniforms.uTime.value = clock.getElapsedTime();
+    renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
 </body>
 </html>
